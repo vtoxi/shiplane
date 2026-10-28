@@ -1,0 +1,27 @@
+# secrets and per-machine state: never commit
+server.json
+cloudflare.json
+dnsproviders.json
+hetzner.json
+data/
+.env
+*.pem
+*.key
+id_*
+
+# generated
+node_modules/
+__pycache__/
+*.pyc
+.coverage*
+coderunner-deploy-share.zip
+
+# private notes
+docs/private/
+.claude/
+
+# editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

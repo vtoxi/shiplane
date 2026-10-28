@@ -1,0 +1,20 @@
+<!--
+  Publish a .NET app straight to a Shiplane site (the Linux answer to Web Deploy; MSDeploy itself needs IIS).
+  Import it in the .csproj:   <Import Project="path\to\Shiplane.targets" />
+  Then:                       dotnet publish -c Release -p:ShiplaneSite=my-api
+  Or in Visual Studio: a Folder publish profile with <ShiplaneSite>my-api</ShiplaneSite> in the .pubxml.
+  First deploy also needs -p:ShiplaneHost=api.example.com -p:ShiplanePort=5000.
+  SHIPLANE_URL and SHIPLANE_KEY (an admin API key) come from the environment, never the project file.
+-->
+<Project>
+  <PropertyGroup>
+    <ShiplaneScript Condition="'$(ShiplaneScript)' == ''">$(MSBuildThisFileDirectory)shiplane-deploy.py</ShiplaneScript>
+    <ShiplanePython Condition="'$(ShiplanePython)' == ''">python</ShiplanePython>
+  </PropertyGroup>
+  <Target Name="ShiplanePublish" AfterTargets="Publish" Condition="'$(ShiplaneSite)' != ''">
+    <PropertyGroup>
+      <_ShiplaneFirst Condition="'$(ShiplaneHost)' != ''">--type dotnet --hostname $(ShiplaneHost) --port $(ShiplanePort) --dll $(TargetName).dll</_ShiplaneFirst>
+    </PropertyGroup>
+    <Exec Command="&quot;$(ShiplanePython)&quot; &quot;$(ShiplaneScript)&quot; &quot;$(PublishDir.TrimEnd('\/'))&quot; --site $(ShiplaneSite) $(_ShiplaneFirst)" />
+  </Target>
+</Project>

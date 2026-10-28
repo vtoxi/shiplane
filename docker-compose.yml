@@ -1,0 +1,28 @@
+# Shiplane in Docker. Start:  docker compose up -d      Then:  docker compose logs shiplane   (the sign-in link and the SSH key to authorize are printed there)
+# The container manages a server over SSH: the machine Docker runs on (host.docker.internal below) or any other VPS.
+services:
+  shiplane:
+    image: ${SHIPLANE_IMAGE:-shiplane/shiplane:latest}      # your Docker Hub name when you publish it yourself
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"          # only this computer. To reach it from elsewhere use a tunnel or a reverse proxy, not an open port
+    volumes:
+      - shiplane-data:/data            # settings, SSH key, activity log, saved connections
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # lets the container SSH into the machine Docker runs on
+    environment:
+      # CODERUNNER_AUTH: login           # accounts and roles instead of the one-time link (see the Manual) - use this if you publish it behind a domain
+      # CODERUNNER_ALLOW_HOSTS: shiplane.example.com
+      CODERUNNER_PROFILE: light
+    mem_limit: 256m
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  shiplane-data:

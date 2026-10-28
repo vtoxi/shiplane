@@ -1,0 +1,27 @@
+# never ship secrets, state or private notes inside an image
+server.json
+cloudflare.json
+dnsproviders.json
+hetzner.json
+data/
+.env
+*.pem
+*.key
+id_*
+docs/private/
+.claude/
+.git/
+.github/
+# not needed to run
+tests/
+frontend/node_modules/
+frontend/src/
+samples/
+scripts/
+**/__pycache__/
+*.pyc
+.coverage*
+*.zip
+*.bat
+connect-server.sh
+start.sh
