@@ -29,15 +29,16 @@ export function DatabasesPage() {
   function scheduleCard() {
     const sc = data.schedule;
     const on = Switch({ label: 'Back up every database each night', description: 'Dumps are kept on the server. Download them now and then to keep a copy off the server.', checked: sc.enabled });
+    const verify = Switch({ label: 'Test-restore each new backup', description: 'Loads the backup into a scratch database and drops it again, so you know it works before you need it. The live data is not touched.', checked: !!sc.verify });
     const hour = Select({ value: String(sc.hour), options: Array.from({ length: 24 }, (_, i) => ({ value: String(i), label: `${String(i).padStart(2, '0')}:00 UTC` })) });
     const keep = Input({ type: 'number', min: 1, value: String(sc.keep) });
     const save = Button({ label: 'Save schedule', variant: 'primary', onClick: () => busy(save, async () => {
-      if (await attempt(api('/api/backups/schedule', { enabled: on.get(), hour: Number(hour.value), keep: Number(keep.value) }), 'Schedule saved')) await load();
+      if (await attempt(api('/api/backups/schedule', { enabled: on.get(), hour: Number(hour.value), keep: Number(keep.value), verify: verify.get() }), 'Schedule saved')) await load();
     }) });
     const now = Button({ label: 'Back up everything now', icon: 'download', onClick: async () => { const r = await attempt(api('/api/backups/run', {})); if (r) showJob('Backup', r.job); } });
     const last = sc.last && sc.last.summary ? h('p', { class: 'mt-4 text-sm text-muted' }, `Last run: ${sc.last.t || '-'}: `, Badge(sc.last.ok === false ? 'failed' : sc.last.ok ? 'ok' : 'running', sc.last.ok === false ? 'bad' : sc.last.ok ? 'ok' : 'info'), ` ${sc.last.summary}`) : null;
     return Card({ title: withHelp('Automatic backups', 'backups-and-restore'), subtitle: 'Old backups beyond the limit are removed (manual ones count too)' },
-      on, h('div', { class: 'mt-4 grid gap-4 sm:grid-cols-2' }, Field({ label: 'Time of day' }, hour), Field({ label: 'Backups to keep per database' }, keep)),
+      on, h('div', { class: 'mt-3' }, verify), h('div', { class: 'mt-4 grid gap-4 sm:grid-cols-2' }, Field({ label: 'Time of day' }, hour), Field({ label: 'Backups to keep per database' }, keep)),
       h('div', { class: 'mt-4 flex flex-wrap gap-2' }, save, now), last);
   }
 
@@ -169,6 +170,7 @@ export function DatabasesPage() {
             { label: 'Size', class: 'text-muted', render: (b) => bytes(b.size) },
             { label: '', class: 'text-right', render: (b) => h('div', { class: 'flex justify-end gap-2' },
               Button({ label: 'Download', icon: 'download', size: 'sm', href: `/api/databases/download?file=${encodeURIComponent(b.file)}` }),
+              Button({ label: 'Test restore', icon: 'check', size: 'sm', onClick: async () => { const r = await attempt(api('/api/databases/verify', { file: b.file })); if (r) showJob('Test restore', r.job); } }),
               Button({ label: 'Restore', icon: 'undo', size: 'sm', onClick: async () => {
                 const db = b.file.replace(/-\d{8}-\d{6}\.sql\.gz$/, '');
                 const c = await confirmDialog({ title: `Restore ${db} from this backup?`, message: `${b.file}: the current data of ${db} is replaced by the backup. A safety backup of the current data is taken first. Connected apps are disconnected for a moment.`, confirmLabel: 'Restore', requireText: db });

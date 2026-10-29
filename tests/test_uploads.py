@@ -141,5 +141,18 @@ def test_drop_guards():
     raises(lambda: dbops.drop(CFG, 'shop', 'shop'), 'busy')
 
 
+def test_verify_backup():
+    fake = use(('TABLES=', 0, 'TABLES=7\n'))
+    assert dbops.verify(CFG, 'shop-20260101-020000.sql.gz') == {'file': 'shop-20260101-020000.sql.gz', 'tables': 7}
+    sent = fake.calls[0]['inp'].decode()
+    assert '/var/backups/coderunner/shop-20260101-020000.sql.gz' in sent and 'trap cleanup EXIT' in sent and 'shiplane_verify_' in sent
+    assert 'DROP DATABASE IF EXISTS $T' in sent and 'DROP DATABASE shop' not in sent             # only the scratch database is ever dropped
+    use(('TABLES=', 1, 'NOT RESTORABLE: syntax error'))
+    raises(lambda: dbops.verify(CFG, 'shop-20260101-020000.sql.gz'), 'NOT RESTORABLE')
+    use(('TABLES=', 0, 'TABLES=0\n'))
+    raises(lambda: dbops.verify(CFG, 'shop-20260101-020000.sql.gz'), 'no tables')
+    raises(lambda: dbops.verify(CFG, '../../etc/passwd'), 'bad backup')
+
+
 if __name__ == '__main__':
     run_tests(dict(globals()))

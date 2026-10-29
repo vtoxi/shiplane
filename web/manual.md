@@ -302,6 +302,8 @@ Each code can be used once (a code that was just used is refused), and the app a
 
 **Restore.** On [Databases, Backups](#/databases?tab=backups) press **Restore**, type the database name to confirm. The app first takes a safety backup of the current data, loads the chosen backup into a fresh database, and only then swaps it in. If the backup cannot be loaded, the current data is untouched. Connected apps lose their connection for a moment.
 
+**Test restore.** A backup you have never restored is a guess. **Test restore** on a backup loads it into a scratch database, counts the tables that came back, and drops the scratch database again; the live data is never touched. Turn on **Test-restore each new backup** in the schedule card to do this for every nightly backup; a backup that cannot be restored raises an alert.
+
 **Automatic rollback on a bad deploy.** After a .NET or Node deploy the server waits up to about 25 seconds for the service to run and answer below HTTP 500. If it does not, the previous release is put back, the deploy shows "ROLLED BACK", and you get an alert. A first deploy has nothing to go back to, so it just reports the failure. Static sites cannot fail this way. Database and environment changes made by the deploy are not undone.
 
 **Require two-factor for everyone ([Settings, Account and security](#/settings?tab=account), super admin).** Turn on your own two-factor first. Then anyone without it is taken to a setup screen at their next sign-in and cannot use the app until they finish. API keys are not affected. The server setting `CODERUNNER_REQUIRE_2FA=1` forces it on.

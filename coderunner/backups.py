@@ -9,7 +9,7 @@ import re
 from . import activity, alerts, config, dbops, deploy, settings
 from .runner import run, script
 
-DEFAULTS = {'enabled': False, 'hour': 3, 'keep': 14, 'last': None}   # hour is UTC
+DEFAULTS = {'enabled': False, 'hour': 3, 'keep': 14, 'verify': False, 'last': None}   # hour is UTC
 
 
 def get():
@@ -18,7 +18,7 @@ def get():
     return c
 
 
-def save(enabled, hour, keep):
+def save(enabled, hour, keep, verify=None):
     hour, keep = int(hour), int(keep)
     if not 0 <= hour <= 23:
         raise ValueError('Hour must be 0 to 23')
@@ -26,6 +26,8 @@ def save(enabled, hour, keep):
         raise ValueError('Keep between 1 and 90 backups per database')
     c = get()
     c.update(enabled=bool(enabled), hour=hour, keep=keep)
+    if verify is not None:
+        c['verify'] = bool(verify)
     settings.put('backups', c)
     return c
 
@@ -120,6 +122,8 @@ def run_all(cfg, say=print):
             if _offsite().get('bucket'):
                 _upload(cfg, dbops.backup_path(r['file']), r['file'])
                 say('  copied off the server')
+            if c['verify']:
+                say('  test restore: %d table(s) came back' % dbops.verify(cfg, r['file'])['tables'])
         except Exception as e:
             bad.append(n)
             say('  FAILED: %s' % e)
@@ -145,6 +149,25 @@ def _job(job, cfg, who):
 
 def start_run(cfg, who):
     return deploy.start_job(_job, cfg, who)
+
+
+def _verify_job(job, cfg, who, file):
+    job.say('Loading %s into a scratch database (the live data is not touched) ...' % file)
+    try:
+        r = dbops.verify(cfg, file)
+    except Exception as e:
+        activity.log('backup-verify', file, str(e)[:200], who, False)
+        alerts.notify('[Shiplane] Backup %s could NOT be restored: %s' % (file, e))
+        job.say('FAILED: %s' % e)
+        return
+    activity.log('backup-verify', file, '%d tables' % r['tables'], who, True)
+    job.ok = True
+    job.say('DONE: %s restores correctly (%d tables).' % (file, r['tables']))
+
+
+def start_verify(cfg, who, file):
+    dbops.backup_path(file)
+    return deploy.start_job(_verify_job, cfg, who, file)
 
 
 def _restore_job(job, cfg, who, name, file):

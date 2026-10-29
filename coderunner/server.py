@@ -316,7 +316,7 @@ def api_backup_offsite_test(qs, body):
 
 @route('POST', '/api/backups/schedule', role='admin')
 def api_backup_schedule_save(qs, body):
-    c = backups.save(body.get('enabled'), body.get('hour', 3), body.get('keep', 14))
+    c = backups.save(body.get('enabled'), body.get('hour', 3), body.get('keep', 14), body.get('verify'))
     audit('backup-schedule', '', 'enabled=%s hour=%s keep=%s' % (c['enabled'], c['hour'], c['keep']))
     return c
 
@@ -332,6 +332,14 @@ def api_db_restore(qs, body):
     name, file = str(body.get('name', '')), str(body.get('file', ''))
     job = backups.start_restore(cfg(), me()['email'] or who(cfg()), name, file, body.get('confirm'))
     audit('db-restore-start', name, file)
+    return {'job': job}
+
+
+@route('POST', '/api/databases/verify', role='admin')
+def api_db_verify(qs, body):
+    file = str(body.get('file', ''))
+    job = backups.start_verify(cfg(), me()['email'] or who(cfg()), file)
+    audit('backup-verify-start', file)
     return {'job': job}
 
 

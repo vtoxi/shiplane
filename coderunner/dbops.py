@@ -108,6 +108,32 @@ echo "restored $N from $(basename "$F")"
     return out
 
 
+def verify(cfg, file):
+    """Prove a backup can be restored: load it into a throwaway database, count what came back, drop the throwaway. The live database is never touched."""
+    script = '''set -uo pipefail
+cd /tmp
+F=%s
+T=shiplane_verify_$(openssl rand -hex 4)
+sudo test -f "$F" || { echo "backup file not found"; exit 1; }
+cleanup() { sudo -u postgres psql -qc "DROP DATABASE IF EXISTS $T" </dev/null >/dev/null 2>&1; }
+trap cleanup EXIT
+sudo -u postgres createdb "$T" </dev/null || { echo "could not create a scratch database"; exit 1; }
+if ! sudo gunzip -c "$F" | sudo -u postgres psql -q -v ON_ERROR_STOP=1 "$T" >/dev/null 2>/tmp/shiplane-verify.err; then
+  echo "NOT RESTORABLE: $(tail -n 2 /tmp/shiplane-verify.err | tr '\\n' ' ')"; rm -f /tmp/shiplane-verify.err; exit 1
+fi
+rm -f /tmp/shiplane-verify.err
+echo "TABLES=$(sudo -u postgres psql -tAc "select count(*) from information_schema.tables where table_schema not in ('pg_catalog','information_schema')" "$T" </dev/null)"
+''' % q(backup_path(file))
+    rc, out = run(cfg, 'bash -s', inp=script.encode(), timeout=900)
+    m = re.search(r'^TABLES=(\d+)$', out, re.M)
+    if rc or not m:
+        raise RuntimeError(out.strip()[-300:] or 'could not verify the backup')
+    n = int(m.group(1))
+    if n == 0:
+        raise RuntimeError('The backup loads but contains no tables')
+    return {'file': file, 'tables': n}
+
+
 def drop(cfg, name, confirm):
     _name(name)
     if name in PROTECTED:
