@@ -18,6 +18,7 @@ import secrets
 import shutil
 import sys
 import threading
+import traceback
 import time
 from urllib.parse import parse_qs, urlparse
 
@@ -1272,6 +1273,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply({'error': str(e)}, 429 if str(e).startswith('Too many') else 403)
         except ValueError as e:
             return self.reply({'error': str(e)}, 400)
+        except (TypeError, KeyError):  # a value of the wrong type or a missing field in the request body: the caller's mistake, not a server fault
+            traceback.print_exc()
+            return self.reply({'error': 'Some values in the request are missing or have the wrong type'}, 400)
         except Exception as e:  # surface the reason in the UI
             return self.reply({'error': str(e)}, 500)
 
