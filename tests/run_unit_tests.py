@@ -12,8 +12,8 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-UNIT = ['migrate', 'plesk', 'migrator', 'migrator_options', 'maintenance', 'apps', 'monitor', 'care', 'caredetail', 'watch', 'heal', 'care_budget', 'metricslog', 'gitdeploy', 'gitproviders', 'dns', 'mailtpl', 'dbengines', 'git_http', 'serverops', 'routes_care', 'perf', 'server_perf', 'status_script', 'routes_apps', 'ssh_auth', 'runner_config', 'deploy_types', 'features', 'routes', 'cloudflare', 'dnsproviders', 'wildcard', 'rename', 'auth', 'ops', 'live']
-GATED = ['coderunner/migrate.py', 'coderunner/plesk.py', 'coderunner/migrator.py', 'coderunner/maintenance.py', 'coderunner/apps.py', 'coderunner/perf.py', 'coderunner/care.py', 'coderunner/caredetail.py', 'coderunner/watch.py', 'coderunner/heal.py', 'coderunner/metricslog.py', 'coderunner/gitdeploy.py', 'coderunner/gitproviders.py', 'coderunner/dns.py', 'coderunner/dbengines.py', 'coderunner/mailtpl.py', 'coderunner/serverops.py', 'coderunner/runner.py', 'coderunner/config.py']
+UNIT = ['migrate', 'plesk', 'migrator', 'migrator_options', 'maintenance', 'apps', 'monitor', 'care', 'caredetail', 'watch', 'heal', 'care_budget', 'metricslog', 'gitdeploy', 'gitproviders', 'dns', 'mailtpl', 'dbengines', 'git_http', 'serverops', 'routes_care', 'perf', 'server_perf', 'status_script', 'routes_apps', 'ssh_auth', 'runner_config', 'deploy_types', 'features', 'routes', 'cloudflare', 'dnsproviders', 'wildcard', 'rename', 'auth', 'ops', 'live', 'uploads']
+GATED = ['coderunner/migrate.py', 'coderunner/plesk.py', 'coderunner/migrator.py', 'coderunner/maintenance.py', 'coderunner/apps.py', 'coderunner/perf.py', 'coderunner/care.py', 'coderunner/caredetail.py', 'coderunner/watch.py', 'coderunner/heal.py', 'coderunner/metricslog.py', 'coderunner/gitdeploy.py', 'coderunner/gitproviders.py', 'coderunner/dns.py', 'coderunner/dbengines.py', 'coderunner/mailtpl.py', 'coderunner/serverops.py', 'coderunner/runner.py', 'coderunner/config.py', 'coderunner/uploads.py', 'coderunner/dbops.py']
 GATE = 95
 
 
