@@ -72,12 +72,17 @@ function statusTab() {
   const box = h('div', {}, Skeleton(3));
   async function load() {
     const c = await api('/api/statuspage');
+    const names = ((store.status && store.status.sites) || (await api('/api/status').catch(() => ({ sites: [] }))).sites).map((x) => x.name);
+    const chosen = new Set(c.sites || []);
+    const boxes = names.map((n) => { const cb = h('input', { type: 'checkbox', checked: !chosen.size || chosen.has(n), id: `sp-${n}` }); return { n, cb }; });
+    const picker = names.length ? h('div', { class: 'mt-4' }, h('span', { class: 'label' }, 'Sites shown'), h('div', { class: 'mt-2', style: 'display:flex;flex-wrap:wrap;gap:.5rem 1.5rem' }, ...boxes.map(({ n, cb }) => h('label', { class: 'flex items-center gap-2 text-sm', for: `sp-${n}` }, cb, n)))) : null;
+    const picked = () => { const on = boxes.filter((b) => b.cb.checked).map((b) => b.n); return !on.length && boxes.length ? null : on.length === boxes.length ? [] : on; };   // empty = every site, including future ones
     const on = Switch({ label: 'Public status page', description: 'A read-only page for customers: site names, up/down and uptime. No addresses.', checked: c.enabled });
     const title = Input({ value: c.title || 'Status' });
-    const save = (rotate) => busy(save.btn, async () => { if (await attempt(api('/api/statuspage', { enabled: on.get(), title: title.value, sites: c.sites || [], rotate }), 'Saved')) await load(); });
+    const save = (rotate) => busy(save.btn, async () => { const sites = picked(); if (sites === null) { toast('Pick at least one site', { tone: 'warn' }); return; } if (await attempt(api('/api/statuspage', { enabled: on.get(), title: title.value, sites, rotate }), 'Saved')) await load(); });
     save.btn = Button({ label: 'Save', variant: 'primary', onClick: () => save(false) });
     const link = c.path ? location.origin + c.path : '';
-    box.replaceChildren(Card({ title: 'Status page' }, on, h('div', { class: 'mt-4 sm:w-80' }, Field({ label: 'Title' }, title)),
+    box.replaceChildren(Card({ title: 'Status page' }, on, h('div', { class: 'mt-4 sm:w-80' }, Field({ label: 'Title' }, title)), picker,
       link ? h('p', { class: 'mt-4 text-sm' }, 'Link: ', h('a', { href: link, target: '_blank', rel: 'noopener', class: 'font-mono text-xs underline break-all' }, link)) : null,
       h('div', { class: 'mt-4 flex gap-2' }, save.btn, c.path ? Button({ label: 'New link', variant: 'ghost', onClick: async () => { const k = await confirmDialog({ title: 'Make a new link?', message: 'The old link stops working immediately.', confirmLabel: 'New link' }); if (k.confirmed) save(true); } }) : null,
         c.path ? Button({ label: 'Copy link', variant: 'ghost', icon: 'copy', onClick: () => { navigator.clipboard && navigator.clipboard.writeText(link); toast('Copied', { tone: 'ok', timeout: 1500 }); } }) : null)));

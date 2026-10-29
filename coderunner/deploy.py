@@ -366,6 +366,29 @@ def site_action(cfg, a):
     raise ValueError('unknown action')
 
 
+def promote(cfg, a):
+    """Staging to production: the live release of site `from` becomes the live release of site `to` (same type), with the health gate and automatic rollback.
+    The production site keeps its own environment variables, database and address. Needs the production name typed to confirm."""
+    src, dst = _name(a.get('from', '')), _name(a.get('to', ''))
+    if src == dst:
+        raise ValueError('Pick two different sites')
+    if dst in PROTECTED or src in PROTECTED:
+        raise ValueError('The site that runs this app cannot be part of a promotion')
+    if a.get('confirm') != dst:
+        raise ValueError('Type the production site name to confirm')
+    sites = {x['name']: x for x in status(cfg)['sites']}
+    for n in (src, dst):
+        if n not in sites:
+            raise ValueError('No site called %s' % n)
+    if sites[src].get('type') != sites[dst].get('type'):
+        raise ValueError('%s is a %s site and %s is a %s site: promote only works between sites of the same type' % (src, sites[src].get('type'), dst, sites[dst].get('type')))
+    if sites[dst].get('type') == 'docker':
+        raise ValueError('Docker sites cannot be promoted this way')
+    if ON_SITE_ACTION:
+        ON_SITE_ACTION(dst, 'deploy')
+    return start_script_job(cfg, script('promote.sh').replace('__FROM__', q(src)).replace('__TO__', q(dst)))
+
+
 def edit_env(cfg, a):
     """Set/unset environment variables of a site (values are write-only) and restart its service."""
     perf.invalidate('status')

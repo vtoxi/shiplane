@@ -11,6 +11,16 @@
 * **Scoped API keys**: admin, read-only or deploy-only, with optional expiry.
 * **MySQL / MariaDB backups**: manual, nightly, off-server, test restore and restore.
 
+* **All servers**: a list of servers with a side-by-side health overview, switching the managed server, and one-click Prepare (adopt) for a fresh Ubuntu/Debian server.
+* **Single sign-on** with any OpenID Connect provider (authorization code + PKCE); existing accounts only.
+* **Per-site permissions**: limit an admin or viewer to some sites.
+* **Staging to production**: promote a site's live release to another site of the same type, with health check and rollback.
+* **Care fixes**: preview of the exact commands, a record of applied fixes, and Undo.
+* Status page: choose which sites it shows.
+
+### Fixed
+* `server_perf` test no longer races the server thread that releases its request slot.
+
 ### Security
 * Settings files (`server.json`, `cloudflare.json`, `dnsproviders.json`) are tightened to owner-only even when they already existed with looser permissions.
 * A deploy can no longer publish this app's own settings, data or SSH keys; deploying a folder by path is limited to super admins (admins and API keys upload a zip).

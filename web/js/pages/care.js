@@ -86,8 +86,15 @@ export function CarePage({ query = {} } = {}) {
 
   async function fix(f) {
     const info = FIX[f.fix.id];
-    const c = await confirmDialog({ title: f.fix.label + '?', message: info.what + (info.tip ? ' ' + info.tip : ''), confirmLabel: f.fix.label, tone: 'primary', requireText: info.typed ? 'apply' : undefined });
+    const pv = await attempt(api(`/api/care/preview?fix=${encodeURIComponent(f.fix.id)}`));     // the exact commands, from fresh facts
+    const cmds = pv && pv.commands.length ? `\n\nIt will run on the server:\n${pv.commands.join('\n')}\n\nYou can undo it afterwards from the "Applied by Shiplane" list.` : '';
+    const c = await confirmDialog({ title: f.fix.label + '?', message: info.what + (info.tip ? ' ' + info.tip : '') + cmds, confirmLabel: f.fix.label, tone: 'primary', requireText: info.typed ? 'apply' : undefined });
     if (c.confirmed) await runJob(f.fix.label, api('/api/care/fix', { fix: f.fix.id, confirm: 'apply' }));
+  }
+
+  async function undo(a) {
+    const c = await confirmDialog({ title: `Undo "${a.label}"?`, message: 'Takes back only what Shiplane changed for this fix. The server is checked again afterwards.', confirmLabel: 'Undo', tone: 'danger', requireText: 'undo' });
+    if (c.confirmed) await runJob(`Undo: ${a.label}`, api('/api/care/undo', { fix: a.id, confirm: 'undo' }));
   }
 
   async function act(action, ip, panel, finding) {
@@ -226,7 +233,9 @@ export function CarePage({ query = {} } = {}) {
           h('div', { class: 'flex flex-wrap gap-2' }, stat(count('bad'), 'to fix', 'bad', 'alert'), stat(count('warn'), 'could be better', 'warn', 'alert'), stat(count('ok'), 'good', 'ok', 'check')),
           h('div', { class: 'flex flex-wrap gap-1.5' }, ...topicChips)))),
       problems.length ? h('div', { class: 'grid gap-4 lg:grid-cols-2' }, ...problems.map(finding)) : null,
-      goodFold);
+      goodFold,
+      data.applied && data.applied.length && store.session.me.role === 'super_admin' ? Card({ title: 'Applied by Shiplane', subtitle: 'Fixes Shiplane made on this server. Each can be taken back.' },
+        h('div', { class: 'space-y-2' }, ...data.applied.map((a) => h('div', { class: 'flex items-center justify-between gap-3' }, h('span', { class: 'text-sm' }, a.label), Button({ label: 'Undo', icon: 'undo', size: 'sm', variant: 'ghost', onClick: () => undo(a) }))))) : null);
   }
 
   load();

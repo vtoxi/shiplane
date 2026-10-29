@@ -24,7 +24,7 @@ import traceback
 import time
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, activity, alerts, apikeys, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
+from . import __version__, activity, alerts, apikeys, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, fleet, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
 from .runner import explain_ssh as runner_explain, popen, q, run, who
 
 # CODERUNNER_TOKEN pins the launch token (token mode); otherwise a fresh one per launch.
@@ -352,6 +352,49 @@ def api_db_verify(qs, body):
     return {'job': job}
 
 
+# ----------------------------------------------------------------------- fleet
+@route('GET', '/api/fleet', role='super_admin')
+def api_fleet(qs, body):
+    return fleet.list_servers()
+
+
+@route('GET', '/api/fleet/overview', role='super_admin')
+def api_fleet_overview(qs, body):
+    return {'servers': fleet.overview()}
+
+
+@route('POST', '/api/fleet/save', role='super_admin')
+def api_fleet_save(qs, body):
+    browser_only()
+    out = fleet.save(body)
+    audit('fleet-save', out['name'], out['host'])
+    return out
+
+
+@route('POST', '/api/fleet/delete', role='super_admin')
+def api_fleet_delete(qs, body):
+    browser_only()
+    fleet.delete(str(body.get('id', '')))
+    audit('fleet-delete', str(body.get('id', '')))
+    return {'ok': True}
+
+
+@route('POST', '/api/fleet/activate', role='super_admin')
+def api_fleet_activate(qs, body):
+    browser_only()
+    out = fleet.activate(str(body.get('id', '')))
+    audit('fleet-activate', out['name'], out['host'])
+    return out
+
+
+@route('POST', '/api/fleet/adopt', role='super_admin')
+def api_fleet_adopt(qs, body):
+    browser_only()
+    job = fleet.start_adopt(str(body.get('id', '')), body.get('confirm'))
+    audit('fleet-adopt', str(body.get('id', '')))
+    return {'job': job}
+
+
 # ----------------------------------------------------------------------- sso
 @route('GET', '/api/sso', role='super_admin')
 def api_sso(qs, body):
@@ -552,6 +595,14 @@ def api_deploy(qs, body):
     check_source(app)
     audit('deploy', app['name'], '%s (%s)%s' % (app['hostname'], app['type'], ', cloudflare' if app['mapCf'] else ''))
     return {'job': deploy.start_deploy(app, cfg(), me()['email'] or who(cfg()))}
+
+
+@route('POST', '/api/site/promote', role='admin')
+def api_site_promote(qs, body):
+    job = deploy.promote(cfg(), body)
+    audit('promote', '%s -> %s' % (body.get('from'), body.get('to')))
+    perf.invalidate('status')
+    return {'job': job}
 
 
 @route('POST', '/api/action')
@@ -989,6 +1040,19 @@ def api_care_action(qs, body):
 def api_care(qs, body):
     """Security and health checklist of the server, with the fixes that are safe to run right now."""
     return care.report(cfg())
+
+
+@route('GET', '/api/care/preview', role='admin')
+def api_care_preview(qs, body):
+    return care.preview(cfg(), qs.get('fix', [''])[0])
+
+
+@route('POST', '/api/care/undo', role='super_admin')
+def api_care_undo(qs, body):
+    browser_only()
+    job = care.start_undo(cfg(), body.get('fix', ''), body.get('confirm'))
+    audit('care-undo', body.get('fix', ''), care.FIXES[body['fix']][1])
+    return {'job': job}
 
 
 @route('POST', '/api/care/fix', role='super_admin')
