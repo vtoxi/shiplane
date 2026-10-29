@@ -367,8 +367,8 @@ def site_action(cfg, a):
 
 
 def edit_env(cfg, a):
-    perf.invalidate('status')
     """Set/unset environment variables of a site (values are write-only) and restart its service."""
+    perf.invalidate('status')
     name = _name(a.get('name', ''))
     ops = []
     for k, v in (a.get('set') or {}).items():
