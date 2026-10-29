@@ -18,6 +18,7 @@ import { ManualPage } from './pages/manual.js';
 import { AuthPage } from './pages/auth.js';
 import { UsersPage } from './pages/users.js';
 import { MaintenancePage } from './pages/maintenance.js';
+import { ProtectPage } from './pages/protect.js';
 import { MigratePage } from './pages/migrate.js';
 import { AppsPage } from './pages/apps.js';
 import { CarePage } from './pages/care.js';
@@ -39,7 +40,8 @@ const NAV = [
     { path: '/migrate', label: 'Migrate', icon: 'upload', show: () => can('admin') }] },
   { group: 'Network', items: [
     { path: '/domains', label: 'Domains', icon: 'cloud', show: () => can('admin') },
-    { path: '/dns', label: 'DNS hosting', icon: 'globe', show: () => can('super_admin') }] },
+    { path: '/dns', label: 'DNS hosting', icon: 'globe', show: () => can('super_admin') },
+    { path: '/protect', label: 'Firewall & email', icon: 'shield', show: () => can('admin') }] },
   { group: 'Workspace', items: [
     { path: '/integrations', label: 'Integrations', icon: 'link', show: () => can('super_admin') },
     { path: '/activity', label: 'Activity', icon: 'activity' }, { path: '/users', label: 'Users', icon: 'lock', show: () => store.session.auth === 'login' && can('super_admin') },
@@ -141,7 +143,7 @@ function buildShell() {
   return { el, outlet, docks: [dock, topDock], mark(path) {
     links.forEach((a) => { const p = a.dataset.path; if (path === p || path.startsWith(p + '/')) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
     toggleNav(false);
-    document.title = `${({ sites: 'Sites', deploy: 'Deploy', databases: 'Databases', server: 'Server', metrics: 'Metrics', care: 'Server care', apps: 'Apps', maintenance: 'Maintenance', migrate: 'Migrate', domains: 'Domains', integrations: 'Integrations', dns: 'DNS hosting', activity: 'Activity', users: 'Users', manual: 'Manual', settings: 'Settings' })[path.split('/')[1]] || 'Shiplane'} - Shiplane`;
+    document.title = `${({ sites: 'Sites', deploy: 'Deploy', databases: 'Databases', server: 'Server', metrics: 'Metrics', care: 'Server care', apps: 'Apps', maintenance: 'Maintenance', protect: 'Firewall & email', migrate: 'Migrate', domains: 'Domains', integrations: 'Integrations', dns: 'DNS hosting', activity: 'Activity', users: 'Users', manual: 'Manual', settings: 'Settings' })[path.split('/')[1]] || 'Shiplane'} - Shiplane`;
   } };
 }
 
@@ -181,6 +183,7 @@ async function boot() {
   route('/care', CarePage);
   route('/apps', AppsPage);
   route('/maintenance', MaintenancePage);
+  route('/protect', ProtectPage);
   route('/migrate', MigratePage);
   route('/migrate/run/:id', MigrationRunPage);
   route('/activity', ActivityPage);

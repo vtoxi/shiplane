@@ -588,7 +588,7 @@ Everyone needs their **own** server user and SSH key, so that actions can be tra
 
 ## Firewall, email checks, status page and scoped API keys
 
-These are API-first for now (see `GET /api/routes`); screens come later.
+Screens: **Firewall & email** in the sidebar (Network group) has tabs for the firewall, the email check and the status page. The same things are available through the API (`GET /api/routes`).
 
 **Firewall (ufw).** `GET /api/firewall` shows the rules. `POST /api/firewall/add` and `/delete` take `{action: allow|deny|limit, port: "443" or "6000:6100", proto: tcp|udp|any, from: "any" or an IP/network}`; add `"preview": true` to see the exact commands without running them. Lock-out guard: SSH's port(s) (the saved port plus whatever sshd listens on) cannot be denied, and the last rule that lets SSH in cannot be removed. `POST /api/firewall/power` (super admin) turns the firewall on (SSH is allowed first) or off; type `"confirm": "firewall"`.
 

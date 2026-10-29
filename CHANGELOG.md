@@ -5,7 +5,7 @@
 ### Added
 * **Test restore** for Postgres backups (on demand, and optionally after every nightly backup): the backup is loaded into a scratch database and dropped again; a failure raises an alert.
 
-* **Firewall manager** (ufw) API with a lock-out guard, command previews and typed confirmation to switch it on/off.
+* **Firewall & email** page (firewall rules, email check, status page) and the matching with a lock-out guard, command previews and typed confirmation to switch it on/off.
 * **Email check** (MX, SPF, DKIM, DMARC) with a fix for every finding.
 * **Public status page** behind an unguessable, rotatable link; installable PWA shell.
 * **Scoped API keys**: admin, read-only or deploy-only, with optional expiry.
