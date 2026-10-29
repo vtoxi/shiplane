@@ -43,6 +43,10 @@ CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline
 SESSION_COOKIE = 'cr_session'
 PUBLIC_FILES = {'/status': 'status.html', '/pub/status.js': 'status.js', '/pub/status.css': 'status.css', '/pub/icon.svg': 'icon.svg',
                 '/pub/manifest.webmanifest': 'manifest.webmanifest', '/sw.js': 'sw.js'}
+# A user limited to some sites (users.sites) may call only these: the site name is in the body ('name') or the query string. Everything else is refused.
+SITE_BODY = {'/api/site/check', '/api/site/env', '/api/site/rename', '/api/site/run', '/api/deploy', '/api/action', '/api/git/save', '/api/git/key', '/api/git/deploy', '/api/git/disconnect'}
+SITE_QUERY = {'/api/site/env/values', '/api/logs', '/api/site/config', '/api/git', '/api/logs/stream'}
+SCOPED_OPEN = {'/api/session', '/api/status', '/api/job', '/api/health', '/api/monitor', '/api/upload', '/api/routes'}
 DEPLOY_KEY_PATHS = {'/api/deploy', '/api/job', '/api/status', '/api/upload', '/api/session'}   # what a deploy-only API key may call
 MAX_JSON = 2 * 1024 * 1024        # API bodies are small; a bigger one is refused before it is read into memory
 
@@ -210,8 +214,9 @@ def api_users_create(qs, body):
 
 @route('POST', '/api/users/update', role='super_admin')
 def api_users_update(qs, body):
-    auth.update_user(int(body.get('id', 0)), me()['id'], body.get('role'), body.get('status'))
-    audit('user-update', str(body.get('id')), 'role=%s status=%s' % (body.get('role'), body.get('status')))
+    extra = {'sites': body['sites']} if 'sites' in body else {}
+    auth.update_user(int(body.get('id', 0)), me()['id'], body.get('role'), body.get('status'), **extra)
+    audit('user-update', str(body.get('id')), 'role=%s status=%s%s' % (body.get('role'), body.get('status'), ' sites=%s' % (body['sites'] or 'all') if 'sites' in body else ''))
     return {'ok': True}
 
 
@@ -1280,6 +1285,15 @@ h1{font-size:1.25rem;margin:0 0 .75rem}code{background:#1c1c24;padding:.1rem .4r
 <p>Tip: set <code>CODERUNNER_TOKEN</code> to a secret of your own before starting, and the link stays the same every time.</p></main></body></html>"""
 
 
+def limit_sites(path, out, allowed):
+    """A copy of a status answer with only the sites a limited user may see (the cached original is never changed)."""
+    if path == '/api/status' and isinstance(out.get('sites'), list):
+        return dict(out, sites=[x for x in out['sites'] if x.get('name') in allowed])
+    if path == '/api/health' and isinstance(out.get('sites'), dict):
+        return dict(out, sites={k: v for k, v in out['sites'].items() if k in allowed})
+    return out
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -1372,8 +1386,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.reply({'error': MSG_2FA, 'need_2fa_setup': True}, 403)
             if auth.RANK[ctx.user['role']] < auth.RANK[r['role']]:
                 return self.reply({'error': 'Your role (%s) cannot do this' % ctx.user['role']}, 403)
+        limited = ctx.user.get('sites') if ctx.user else None
+        if limited is not None and ctx.user['role'] != 'super_admin' and not u.path.startswith('/api/auth/'):
+            name = body.get('name') if u.path in SITE_BODY else parse_qs(u.query).get('name', [''])[0] if u.path in SITE_QUERY else None
+            if u.path not in SCOPED_OPEN and (name is None or name not in limited):
+                return self.reply({'error': 'Your account is limited to some sites and cannot do this'}, 403)
         try:
-            return self.reply(r['fn'](parse_qs(u.query), body))
+            out = r['fn'](parse_qs(u.query), body)
+            if limited is not None and ctx.user['role'] != 'super_admin' and isinstance(out, dict):
+                out = limit_sites(u.path, out, limited)
+            return self.reply(out)
         except LookupError as e:
             return self.reply({'error': str(e)}, 404)
         except PermissionError as e:
@@ -1396,6 +1418,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply({'error': MSG_2FA, 'need_2fa_setup': True}, 403)
         if auth.RANK[ctx.user['role']] < auth.RANK['admin']:
             return self.reply({'error': 'Your role (%s) cannot do this' % ctx.user['role']}, 403)
+        if ctx.user.get('sites') is not None and ctx.user['role'] != 'super_admin':
+            return self.reply({'error': 'Your account is limited to some sites and cannot do this'}, 403)
         try:
             path = dbops.backup_path(qs.get('file', [''])[0])
             c = cfg()
@@ -1421,6 +1445,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply({'error': MSG_2FA, 'need_2fa_setup': True}, 403)
         if auth.RANK[ctx.user['role']] < auth.RANK['admin']:
             return self.reply({'error': 'Your role (%s) cannot do this' % ctx.user['role']}, 403)
+        limited = ctx.user.get('sites')
+        if limited is not None and ctx.user['role'] != 'super_admin' and (qs.get('kind', ['site'])[0] != 'site' or qs.get('name', [''])[0] not in limited):
+            return self.reply({'error': 'Your account is limited to some sites and cannot do this'}, 403)
         if not perf.streams.acquire(timeout=0):
             return self.reply({'error': 'Too many live logs are open. Close one and try again.'}, 429)
         try:
