@@ -1,0 +1,9 @@
+{
+  "mode": "ssh",
+  "auth": "key",
+  "host": "203.0.113.10",
+  "port": 22,
+  "user": "deploy",
+  "key": "~/.ssh/id_ed25519",
+  "domains": ["example.com"]
+}

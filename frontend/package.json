@@ -1,0 +1,12 @@
+{
+  "name": "coderunner-frontend",
+  "private": true,
+  "description": "Builds web/app.css (Tailwind 3). Only needed when you change the design; the compiled CSS is committed.",
+  "scripts": {
+    "build": "tailwindcss -c tailwind.config.js -i src/input.css -o ../web/app.css --minify",
+    "watch": "tailwindcss -c tailwind.config.js -i src/input.css -o ../web/app.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
+}
