@@ -6,7 +6,7 @@ import time
 import json
 import re
 
-from . import activity, alerts, config, dbops, deploy, settings
+from . import activity, alerts, config, dbengines, dbops, deploy, settings
 from .runner import run, script
 
 DEFAULTS = {'enabled': False, 'hour': 3, 'keep': 14, 'verify': False, 'last': None}   # hour is UTC
@@ -98,7 +98,7 @@ def prune(cfg, keep, lines=None):
     """Delete the oldest backups of each database beyond `keep` (manual ones count too)."""
     by = {}
     for b in dbops.list_all(cfg)['backups']:
-        by.setdefault(b['file'].rsplit('-', 2)[0], []).append(b['file'])
+        by.setdefault((b['file'].rsplit('-', 2)[0], dbops.engine_of(b['file'])), []).append(b['file'])     # a Postgres and a MySQL database of the same name are kept apart
     removed = 0
     for files in by.values():
         for f in sorted(files, reverse=True)[keep:]:
@@ -112,12 +112,17 @@ def prune(cfg, keep, lines=None):
 def run_all(cfg, say=print):
     """Back up every database except the system ones, then prune. Returns (ok, summary)."""
     c = get()
-    names = [d['name'] for d in dbops.list_all(cfg)['databases'] if d['name'] not in dbops.PROTECTED and config.DB_RE.match(d['name'])]
+    names = [(d['name'], 'postgres') for d in dbops.list_all(cfg)['databases'] if d['name'] not in dbops.PROTECTED and config.DB_RE.match(d['name'])]
+    try:
+        my = dbengines.mysql_state(cfg)
+        names += [(d['name'], 'mysql') for d in my['databases'] if my['running'] and d['name'] not in dbengines.MYSQL_PROTECTED and config.DB_RE.match(d['name'])]
+    except Exception:
+        pass     # MySQL is optional: a problem reading it must not stop the Postgres backups
     bad = []
-    for n in names:
-        say('Backing up %s ...' % n)
+    for n, engine in names:
+        say('Backing up %s%s ...' % (n, ' (MySQL)' if engine == 'mysql' else ''))
         try:
-            r = dbops.backup(cfg, n)
+            r = dbops.backup(cfg, n, engine)
             say('  %s (%d bytes)' % (r['file'], r['size']))
             if _offsite().get('bucket'):
                 _upload(cfg, dbops.backup_path(r['file']), r['file'])
@@ -172,7 +177,7 @@ def start_verify(cfg, who, file):
 
 def _restore_job(job, cfg, who, name, file):
     job.say('Taking a safety backup of %s first ...' % name)
-    safe = dbops.backup(cfg, name)
+    safe = dbops.backup(cfg, name, dbops.engine_of(file))
     job.say('  saved as %s' % safe['file'])
     job.say('Restoring %s from %s ...' % (name, file))
     out = dbops.restore(cfg, name, file)

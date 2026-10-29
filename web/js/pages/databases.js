@@ -109,10 +109,12 @@ export function DatabasesPage() {
       columns: [
         { label: 'Database', render: (d) => h('span', { class: 'font-medium' }, d.name) },
         { label: 'Size', class: 'text-muted', render: (d) => bytes(d.size) },
-        { label: '', class: 'text-right', render: (d) => Button({ label: 'Drop', icon: 'trash', size: 'sm', variant: 'danger-soft', onClick: async () => {
-          const c = await confirmDialog({ title: `Drop ${d.name}?`, message: 'The database, its data and its user of the same name are deleted. There is no backup button for MySQL here yet: dump it first if you may need it.', confirmLabel: 'Drop database', requireText: d.name });
-          if (c.confirmed && await attempt(api('/api/dbengines/mysql/drop', { name: d.name, confirm: d.name }), `Dropped ${d.name}`)) await load();
-        } }) },
+        { label: '', class: 'text-right', render: (d) => h('div', { class: 'flex justify-end gap-2' },
+          Button({ label: 'Back up', icon: 'download', size: 'sm', onClick: function () { busy(this, async () => { const r = await attempt(api('/api/databases/backup', { name: d.name, engine: 'mysql' }), (x) => `Backup saved on the server: ${x.file} (${bytes(x.size)})`); if (r) await load(); }); } }),
+          Button({ label: 'Drop', icon: 'trash', size: 'sm', variant: 'danger-soft', onClick: async () => {
+            const c = await confirmDialog({ title: `Drop ${d.name}?`, message: 'The database, its data and its user of the same name are deleted. Take a backup first if you may need it.', confirmLabel: 'Drop database', requireText: d.name });
+            if (c.confirmed && await attempt(api('/api/dbengines/mysql/drop', { name: d.name, confirm: d.name }), `Dropped ${d.name}`)) await load();
+          } })) },
       ],
       rows: m.databases, empty: EmptyState({ icon: 'database', title: 'No databases', body: 'Create one above.' }) }))];
   }
@@ -159,7 +161,7 @@ export function DatabasesPage() {
   // Backups have their own tab: today they cover the PostgreSQL databases only, and the tab says so.
   function backupsTab() {
     return [
-      Alert({ tone: 'info', title: 'PostgreSQL databases only, for now' }, 'Nightly backups, the off-server copy and restore cover every PostgreSQL database. MySQL / MariaDB and SQL Server databases are not backed up by Shiplane yet: dump them yourself before risky changes.'),
+      Alert({ tone: 'info', title: 'PostgreSQL and MySQL / MariaDB' }, 'Nightly backups, the off-server copy, test restore and restore cover PostgreSQL and MySQL / MariaDB databases. SQL Server databases are not backed up by Shiplane yet: dump them yourself before risky changes.'),
       scheduleCard(),
       offsiteCard(),
       Card({ title: 'Backups', subtitle: 'Gzipped SQL dumps kept on the server in /var/backups/coderunner. Download them to keep a copy off the server.', bodyClass: '' },
@@ -172,7 +174,7 @@ export function DatabasesPage() {
               Button({ label: 'Download', icon: 'download', size: 'sm', href: `/api/databases/download?file=${encodeURIComponent(b.file)}` }),
               Button({ label: 'Test restore', icon: 'check', size: 'sm', onClick: async () => { const r = await attempt(api('/api/databases/verify', { file: b.file })); if (r) showJob('Test restore', r.job); } }),
               Button({ label: 'Restore', icon: 'undo', size: 'sm', onClick: async () => {
-                const db = b.file.replace(/-\d{8}-\d{6}\.sql\.gz$/, '');
+                const db = b.file.replace(/-\d{8}-\d{6}(\.my)?\.sql\.gz$/, '');
                 const c = await confirmDialog({ title: `Restore ${db} from this backup?`, message: `${b.file}: the current data of ${db} is replaced by the backup. A safety backup of the current data is taken first. Connected apps are disconnected for a moment.`, confirmLabel: 'Restore', requireText: db });
                 if (!c.confirmed) return;
                 const r = await attempt(api('/api/databases/restore', { name: db, file: b.file, confirm: db }));

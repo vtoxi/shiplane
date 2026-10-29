@@ -168,8 +168,16 @@ def test_backup_verification_setting_job_and_nightly_run():
         dbops.verify = lambda cfg, f: {'file': f, 'tables': 2}
         dbops.list_all = lambda cfg: {'databases': [{'name': 'shop'}], 'backups': []}
         dbops.backup = lambda cfg, n: {'file': n + '-20260101-020000.sql.gz', 'size': 5}
-        backups.run_all({}, said.append)
-        assert any('test restore: 2 table(s)' in l for l in said)
+        from coderunner import dbengines
+        real_my, calls = dbengines.mysql_state, []
+        dbengines.mysql_state = lambda cfg: {'installed': True, 'running': True, 'databases': [{'name': 'wp', 'size': 1}, {'name': 'sys', 'size': 1}]}
+        dbops.backup = lambda cfg, n, engine='postgres': calls.append((n, engine)) or {'file': n + '-20260101-020000' + ('.my' if engine == 'mysql' else '') + '.sql.gz', 'size': 5}
+        try:
+            backups.run_all({}, said.append)
+        finally:
+            dbengines.mysql_state = real_my
+        assert any('test restore: 2 table(s)' in l for l in said) and calls == [('shop', 'postgres'), ('wp', 'mysql')]      # system schemas are skipped
+        assert any('wp (MySQL)' in l for l in said)
     finally:
         dbops.verify, backups.alerts, backups.activity = saved
         dbops.list_all, dbops.backup = orig

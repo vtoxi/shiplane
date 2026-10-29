@@ -174,7 +174,9 @@ export function SettingsPage({ view = 'settings' } = {}) {
       keysBox.replaceChildren(Table({
         columns: [
           { label: 'Name', render: (k) => h('span', { class: 'font-medium' }, k.name) },
+          { label: 'Scope', class: 'text-muted', render: (k) => k.scope || 'admin' },
           { label: 'Created', class: 'text-muted', render: (k) => k.created },
+          { label: 'Expires', class: 'text-muted', render: (k) => k.expires ? new Date(k.expires * 1000).toLocaleDateString() : 'never' },
           { label: 'Last used', class: 'text-muted', render: (k) => k.last_used || 'never' },
           { label: '', class: 'text-right', render: (k) => Button({ label: 'Revoke', icon: 'trash', size: 'sm', variant: 'danger-soft', onClick: async () => {
             const c = await confirmDialog({ title: `Revoke "${k.name}"?`, message: 'Anything using this key stops working immediately.', confirmLabel: 'Revoke key' });
@@ -187,8 +189,10 @@ export function SettingsPage({ view = 'settings' } = {}) {
     } catch (e) { keysBox.replaceChildren(Alert({ tone: 'bad', title: 'Could not read the keys' }, e.message)); }
   }
   const keyName = Input({ placeholder: 'phone' });
+  const keyScope = Select({ value: 'admin', options: [{ value: 'admin', label: 'Admin (everything)' }, { value: 'viewer', label: 'Read-only' }, { value: 'deploy', label: 'Deploy only (for CI)' }] });
+  const keyDays = Input({ type: 'number', min: 0, value: '0' });
   const createKey = Button({ label: 'Create key', icon: 'plus', variant: 'primary', onClick: () => busy(createKey, async () => {
-    const r = await attempt(api('/api/keys/create', { name: keyName.value }));
+    const r = await attempt(api('/api/keys/create', { name: keyName.value, scope: keyScope.value, days: Number(keyDays.value) || 0 }));
     if (!r) return;
     keyName.value = '';
     const c = Console({ lines: [r.token] });
@@ -376,7 +380,7 @@ export function SettingsPage({ view = 'settings' } = {}) {
   if (isSuper) loadAlerts();
   sync();
   const apiKeysCard = isSuper ? Card({ title: 'API keys', subtitle: 'Let another program (for example a mobile app) call this API with "Authorization: Bearer <key>". See the Manual for the endpoint list.' },
-    h('div', { class: 'mb-4 flex flex-col gap-3 sm:flex-row sm:items-end' }, h('div', { class: 'sm:w-64' }, Field({ label: 'Key name' }, keyName)), createKey), keysBox) : null;
+    h('div', { class: 'mb-4 flex flex-col gap-3 sm:flex-row sm:items-end' }, h('div', { class: 'sm:w-64' }, Field({ label: 'Key name' }, keyName)), h('div', { class: 'sm:w-48' }, Field({ label: 'Scope' }, keyScope)), h('div', { class: 'sm:w-32' }, Field({ label: 'Expires in (days)', hint: '0 = never' }, keyDays)), createKey), keysBox) : null;
   const connectionCard = isSuper ? Card({ title: 'Connection', subtitle: 'Saved next to the app in server.json' },
     h('div', { class: 'space-y-4' }, h('div', {}, h('span', { class: 'label' }, 'Mode'), mode), sshFields, Field({ label: 'Domains served by the wildcard route', hint: 'Comma separated. Hostnames under these (one level) work without any Cloudflare change.' }, domains),
       h('div', { class: 'flex gap-2' }, test, save), result)) : null;

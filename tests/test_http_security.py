@@ -87,6 +87,63 @@ def test_api_keys():
     assert req('POST', '/api/cron/delete', {}, {'Authorization': 'Bearer ' + token}, cookie=False)[0] in (200, 400)   # API clients need no browser header
 
 
+def test_scoped_and_expiring_api_keys():
+    import time
+    viewer, _ = apikeys.create('ro', 'viewer')
+    deployer, _ = apikeys.create('ci', 'deploy')
+    old, entry = apikeys.create('old', 'admin', 1)
+    auth_ = lambda t: {'Authorization': 'Bearer ' + t}
+    assert req('GET', '/api/session', headers=auth_(viewer), cookie=False)[0] == 200
+    assert req('POST', '/api/cron/delete', {}, auth_(viewer), cookie=False)[0] == 403             # read-only
+    assert req('GET', '/api/session', headers=auth_(deployer), cookie=False)[0] == 200
+    assert req('GET', '/api/apps', headers=auth_(deployer), cookie=False)[0] == 403               # deploy-only keys reach nothing else
+    assert req('POST', '/api/cron/delete', {}, auth_(deployer), cookie=False)[0] == 403
+    assert req('POST', '/api/deploy', {}, auth_(deployer), cookie=False)[0] == 400                # allowed through to the handler (which rejects the empty request)
+    assert req('POST', '/api/upload', raw=b'nope', headers=auth_(deployer), cookie=False)[0] == 400
+    assert req('POST', '/api/upload', raw=b'nope', headers=auth_(viewer), cookie=False)[0] == 403
+    assert req('GET', '/api/session', headers=auth_(old), cookie=False)[0] == 200
+    keys = apikeys._load()
+    next(k for k in keys if k['id'] == entry['id'])['expires'] = int(time.time()) - 5
+    apikeys._save(keys)
+    assert req('GET', '/api/session', headers=auth_(old), cookie=False)[0] == 401                 # expired
+    for bad in (('x', 'root'), ('x', 'admin', -1), ('x', 'admin', 99999)):
+        try:
+            apikeys.create(*bad)
+        except ValueError:
+            continue
+        raise AssertionError(bad)
+
+
+def test_public_status_page_needs_its_token_and_leaks_nothing_else():
+    from coderunner import monitor
+    assert req('GET', '/api/public/status?t=x', cookie=False)[0] == 404                                 # off by default
+    out = server.ROUTES[('POST', '/api/statuspage')]['fn']({}, {'enabled': True, 'title': 'Acme status', 'sites': ['shop']})
+    token = out['path'].split('t=')[1]
+    monitor.STATE.clear()
+    monitor.STATE.update({'shop': {'host': 'secret-host.example.com', 'up': True, 'points': [[1, 20], [2, 30]]}, 'blog': {'host': 'b.example.com', 'up': False, 'points': [[1, 0]]}})
+    s, _, body = req('GET', '/api/public/status?t=' + token, cookie=False)
+    data = json.loads(body)
+    assert s == 200 and data['title'] == 'Acme status' and data['overall'] == 'ok' and [x['name'] for x in data['sites']] == ['shop']      # only the chosen site
+    assert b'secret-host' not in body and b'example.com' not in body                                          # no addresses
+    assert req('GET', '/api/public/status?t=wrong', cookie=False)[0] == 404 and req('GET', '/api/public/status', cookie=False)[0] == 404
+    for path, ctype in (('/status', 'text/html'), ('/pub/status.js', 'text/javascript'), ('/pub/manifest.webmanifest', 'application/manifest+json'), ('/sw.js', 'text/javascript')):
+        s, h, _ = req('GET', path, cookie=False)
+        assert s == 200 and h['content-type'].startswith(ctype), path
+    assert req('GET', '/pub/../server.json', cookie=False)[0] in (404, 401)
+    new = server.ROUTES[('POST', '/api/statuspage')]['fn']({}, {'enabled': True, 'sites': [], 'rotate': True})['path']
+    assert new != out['path'] and req('GET', '/api/public/status?t=' + token, cookie=False)[0] == 404      # rotating the link kills the old one
+    monitor.STATE['blog']['up'] = False
+    assert json.loads(req('GET', '/api/public/status?t=' + new.split('t=')[1], cookie=False)[2])['overall'] == 'degraded'
+    server.ROUTES[('POST', '/api/statuspage')]['fn']({}, {'enabled': False})
+    assert req('GET', '/api/public/status?t=' + new.split('t=')[1], cookie=False)[0] == 404
+    for bad in ({'sites': 'all'}, {'sites': [5]}):
+        try:
+            server.ROUTES[('POST', '/api/statuspage')]['fn']({}, bad)
+        except ValueError:
+            continue
+        raise AssertionError(bad)
+
+
 def test_bad_bodies_and_unknown_routes():
     assert req('POST', '/api/cron/delete', headers=XRW, raw=b'{not json')[0] == 400
     assert req('POST', '/api/cron/delete', headers=dict(XRW, **{'Content-Length': str(server.MAX_JSON + 1)}), raw=b'{}')[0] == 413

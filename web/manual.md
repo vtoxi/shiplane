@@ -584,3 +584,18 @@ Everyone needs their **own** server user and SSH key, so that actions can be tra
 **Can two people use it at once?** Yes, each on their own computer with their own key. Activity shows who did what.
 
 **Where is my data?** Sites and databases are on the server. This app keeps only its settings and the activity log.
+
+
+## Firewall, email checks, status page and scoped API keys
+
+These are API-first for now (see `GET /api/routes`); screens come later.
+
+**Firewall (ufw).** `GET /api/firewall` shows the rules. `POST /api/firewall/add` and `/delete` take `{action: allow|deny|limit, port: "443" or "6000:6100", proto: tcp|udp|any, from: "any" or an IP/network}`; add `"preview": true` to see the exact commands without running them. Lock-out guard: SSH's port(s) (the saved port plus whatever sshd listens on) cannot be denied, and the last rule that lets SSH in cannot be removed. `POST /api/firewall/power` (super admin) turns the firewall on (SSH is allowed first) or off; type `"confirm": "firewall"`.
+
+**Email check.** `GET /api/email/check?domain=example.com[&selector=mysel]` reads MX, SPF, DKIM (common selectors plus yours) and DMARC over DNS-over-HTTPS and returns findings with a fix for each. It changes nothing.
+
+**Status page (super admin).** `POST /api/statuspage {enabled, title, sites, rotate}` turns on a read-only page at `/status?t=<token>`. It shows only the site names you choose, up/down and uptime: no addresses or server details. Share the link; `rotate: true` makes a new link and kills the old one. The app is also installable as a PWA (the service worker caches nothing).
+
+**Scoped API keys.** When creating a key choose a scope: `admin`, `viewer` (read-only) or `deploy` (only `/api/deploy`, `/api/upload`, `/api/job`, `/api/status`; made for CI), and an expiry in days (0 = never).
+
+**MySQL / MariaDB backups.** Back up, nightly schedule, test restore and restore now cover MySQL / MariaDB too (files end in `.my.sql.gz`). A MySQL restore is proven on a scratch database first, then the real database is emptied and loaded; the safety backup taken just before is the way back if that second load fails.

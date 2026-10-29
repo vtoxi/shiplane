@@ -6,7 +6,7 @@ from . import config
 from .runner import q, run
 
 BACKUP_DIR = '/var/backups/coderunner'
-BACKUP_RE = re.compile(r'^[a-z][a-z0-9_]{0,40}-\d{8}-\d{6}\.sql\.gz$')
+BACKUP_RE = re.compile(r'^[a-z][a-z0-9_]{0,40}-\d{8}-\d{6}(\.my)?\.sql\.gz$')      # `.my` marks a MySQL / MariaDB dump
 PROTECTED = {'postgres', 'template0', 'template1'}
 
 
@@ -60,8 +60,14 @@ echo "PASSWORD=$PW"
     return {'name': name, 'user': user, 'password': pw, 'url': 'postgresql://%s:%s@127.0.0.1:5432/%s' % (user, quote(pw, safe=''), name)}
 
 
-def backup(cfg, name):
+def engine_of(file):
+    return 'mysql' if str(file).endswith('.my.sql.gz') else 'postgres'
+
+
+def backup(cfg, name, engine='postgres'):
     _name(name)
+    if engine == 'mysql':
+        return _mysql_backup(cfg, name)
     script = '''set -euo pipefail
 N=%s
 sudo install -d -m 700 %s
@@ -78,9 +84,55 @@ echo "FILE=$(basename "$F") SIZE=$(sudo stat -c %%s "$F")"
     return {'file': m.group(1), 'size': int(m.group(2))}
 
 
+def _mysql_backup(cfg, name):
+    script = '''set -euo pipefail
+N=%s
+sudo install -d -m 700 %s
+F=%s/$N-$(date +%%Y%%m%%d-%%H%%M%%S).my.sql.gz
+cd /tmp
+sudo mysqldump --single-transaction --routines --triggers --events --default-character-set=utf8mb4 "$N" | gzip | sudo tee "$F" >/dev/null
+sudo chmod 600 "$F"
+echo "FILE=$(basename "$F") SIZE=$(sudo stat -c %%s "$F")"
+''' % (q(name), BACKUP_DIR, BACKUP_DIR)
+    rc, out = run(cfg, 'bash -s', inp=script.encode(), timeout=600)
+    m = re.search(r'FILE=(\S+) SIZE=(\d+)', out)
+    if rc or not m:
+        raise RuntimeError(out.strip()[-300:] or 'backup failed')
+    return {'file': m.group(1), 'size': int(m.group(2))}
+
+
+def _mysql_restore(cfg, name, file):
+    """MySQL cannot rename a database, so the dump is first proven on a scratch database; only then is the real one dropped, recreated and loaded.
+    The job takes a safety backup beforehand, which is the way back if the second load were to fail."""
+    script = '''set -uo pipefail
+cd /tmp
+N=%s; F=%s; T=${N}_restore
+my() { sudo mysql "$@" </dev/null; }
+sudo test -f "$F" || { echo "backup file not found"; exit 1; }
+my -e "SELECT 1 FROM information_schema.schemata WHERE schema_name='$N'" | grep -q 1 || { echo "database $N does not exist"; exit 1; }
+my -e "DROP DATABASE IF EXISTS \\`$T\\`"
+my -e "CREATE DATABASE \\`$T\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+if ! sudo gunzip -c "$F" | sudo mysql "$T"; then
+  echo "the backup could not be loaded; $N is unchanged"; my -e "DROP DATABASE IF EXISTS \\`$T\\`"; exit 1
+fi
+my -e "DROP DATABASE \\`$T\\`"
+my -e "DROP DATABASE \\`$N\\`" && my -e "CREATE DATABASE \\`$N\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+if ! sudo gunzip -c "$F" | sudo mysql "$N"; then
+  echo "loading into $N failed after it was emptied: restore the safety backup taken just before"; exit 2
+fi
+echo "restored $N from $(basename "$F")"
+''' % (q(name), q(backup_path(file)))
+    rc, out = run(cfg, 'bash -s', inp=script.encode(), timeout=900)
+    if rc:
+        raise RuntimeError(out.strip()[-300:] or 'restore failed')
+    return out
+
+
 def restore(cfg, name, file):
     """Load a backup into a new database, then swap it in, so a bad dump leaves the current data untouched."""
     _name(name)
+    if engine_of(file) == 'mysql':
+        return _mysql_restore(cfg, name, file)
     script = '''set -euo pipefail
 cd /tmp
 N=%s; F=%s; T=${N}_restore; OLD=${N}_old
@@ -108,9 +160,25 @@ echo "restored $N from $(basename "$F")"
     return out
 
 
+MYSQL_VERIFY = '''set -uo pipefail
+cd /tmp
+F=%s
+T=shiplane_verify_$(openssl rand -hex 4)
+sudo test -f "$F" || { echo "backup file not found"; exit 1; }
+cleanup() { sudo mysql -e "DROP DATABASE IF EXISTS \\`$T\\`" </dev/null >/dev/null 2>&1; }
+trap cleanup EXIT
+sudo mysql -e "CREATE DATABASE \\`$T\\`" </dev/null || { echo "could not create a scratch database"; exit 1; }
+if ! sudo gunzip -c "$F" | sudo mysql "$T" 2>/tmp/shiplane-verify.err; then
+  echo "NOT RESTORABLE: $(tail -n 2 /tmp/shiplane-verify.err | tr '\\n' ' ')"; rm -f /tmp/shiplane-verify.err; exit 1
+fi
+rm -f /tmp/shiplane-verify.err
+echo "TABLES=$(sudo mysql -N -B -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$T'" </dev/null)"
+'''
+
+
 def verify(cfg, file):
     """Prove a backup can be restored: load it into a throwaway database, count what came back, drop the throwaway. The live database is never touched."""
-    script = '''set -uo pipefail
+    script = (MYSQL_VERIFY if engine_of(file) == 'mysql' else '''set -uo pipefail
 cd /tmp
 F=%s
 T=shiplane_verify_$(openssl rand -hex 4)
@@ -123,7 +191,7 @@ if ! sudo gunzip -c "$F" | sudo -u postgres psql -q -v ON_ERROR_STOP=1 "$T" >/de
 fi
 rm -f /tmp/shiplane-verify.err
 echo "TABLES=$(sudo -u postgres psql -tAc "select count(*) from information_schema.tables where table_schema not in ('pg_catalog','information_schema')" "$T" </dev/null)"
-''' % q(backup_path(file))
+''') % q(backup_path(file))
     rc, out = run(cfg, 'bash -s', inp=script.encode(), timeout=900)
     m = re.search(r'^TABLES=(\d+)$', out, re.M)
     if rc or not m:

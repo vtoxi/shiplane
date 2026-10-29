@@ -154,5 +154,22 @@ def test_verify_backup():
     raises(lambda: dbops.verify(CFG, '../../etc/passwd'), 'bad backup')
 
 
+def test_mysql_backups_restore_and_verify():
+    my = 'shop-20260101-020000.my.sql.gz'
+    assert dbops.engine_of(my) == 'mysql' and dbops.engine_of('shop-20260101-020000.sql.gz') == 'postgres' and dbops.BACKUP_RE.match(my)
+    fake = use(('mysqldump', 0, 'FILE=%s SIZE=12' % my))
+    assert dbops.backup(CFG, 'shop', 'mysql') == {'file': my, 'size': 12} and 'pg_dump' not in fake.calls[0]['inp'].decode()
+    use(('mysqldump', 1, 'Access denied'))
+    raises(lambda: dbops.backup(CFG, 'shop', 'mysql'), 'Access denied')
+    fake = use(('restored', 0, 'restored shop from x'))
+    assert 'restored' in dbops.restore(CFG, 'shop', my)
+    sent = fake.calls[0]['inp'].decode()
+    assert 'mysql' in sent and 'psql' not in sent and '_restore' in sent and sent.index('DROP DATABASE \\`$T') < sent.index('DROP DATABASE \\`$N')   # proven on a scratch database before the real one is touched
+    use(('restored', 2, 'loading into shop failed after it was emptied'))
+    raises(lambda: dbops.restore(CFG, 'shop', my), 'after it was emptied')
+    fake = use(('TABLES=', 0, 'TABLES=5'))
+    assert dbops.verify(CFG, my)['tables'] == 5 and 'sudo mysql' in fake.calls[0]['inp'].decode() and 'psql' not in fake.calls[0]['inp'].decode()
+
+
 if __name__ == '__main__':
     run_tests(dict(globals()))

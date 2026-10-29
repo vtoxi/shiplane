@@ -23,7 +23,7 @@ import traceback
 import time
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, activity, alerts, apikeys, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, maintenance, migrate, migrator, monitor, serverops, settings, uploads
+from . import __version__, activity, alerts, apikeys, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
 from .runner import explain_ssh as runner_explain, popen, q, run, who
 
 # CODERUNNER_TOKEN pins the launch token (token mode); otherwise a fresh one per launch.
@@ -38,9 +38,12 @@ STATE = {
 ROUTES = {}   # (method, path) -> {fn, role, public}
 ctx = threading.local()  # per request: user, via_key, ip, cookies to set
 TYPES = {'.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml',
-         '.json': 'application/json', '.md': 'text/markdown'}
+         '.json': 'application/json', '.md': 'text/markdown', '.webmanifest': 'application/manifest+json'}
 CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 SESSION_COOKIE = 'cr_session'
+PUBLIC_FILES = {'/status': 'status.html', '/pub/status.js': 'status.js', '/pub/status.css': 'status.css', '/pub/icon.svg': 'icon.svg',
+                '/pub/manifest.webmanifest': 'manifest.webmanifest', '/sw.js': 'sw.js'}
+DEPLOY_KEY_PATHS = {'/api/deploy', '/api/job', '/api/status', '/api/upload', '/api/session'}   # what a deploy-only API key may call
 MAX_JSON = 2 * 1024 * 1024        # API bodies are small; a bigger one is refused before it is read into memory
 
 
@@ -343,6 +346,66 @@ def api_db_verify(qs, body):
     return {'job': job}
 
 
+# ------------------------------------------------------------ status page, email
+@route('GET', '/api/public/status', public=True)
+def api_public_status(qs, body):
+    return statuspage.public_data(qs.get('t', [''])[0])
+
+
+@route('GET', '/api/statuspage', role='super_admin')
+def api_statuspage(qs, body):
+    return statuspage.public_config()
+
+
+@route('POST', '/api/statuspage', role='super_admin')
+def api_statuspage_save(qs, body):
+    out = statuspage.save(body.get('enabled'), body.get('title'), body.get('sites') or [], bool(body.get('rotate')))
+    audit('statuspage', 'on' if out['enabled'] else 'off')
+    return out
+
+
+@route('GET', '/api/email/check', role='admin')
+def api_email_check(qs, body):
+    return emailcheck.check(qs.get('domain', [''])[0], [x for x in qs.get('selector', []) if x])
+
+
+# --------------------------------------------------------------------- firewall
+@route('GET', '/api/firewall', role='admin')
+def api_firewall(qs, body):
+    return firewall.status(cfg())
+
+
+def _fw_rule(body):
+    return str(body.get('action', '')), body.get('port', ''), str(body.get('proto') or 'tcp'), body.get('from') or 'any'
+
+
+@route('POST', '/api/firewall/add', role='admin')
+def api_firewall_add(qs, body):
+    out = firewall.add(cfg(), *_fw_rule(body), preview=bool(body.get('preview')))
+    if not body.get('preview'):
+        audit('firewall-add', out['commands'][0])
+        perf.invalidate('status')
+    return out
+
+
+@route('POST', '/api/firewall/delete', role='admin')
+def api_firewall_delete(qs, body):
+    out = firewall.delete(cfg(), *_fw_rule(body), preview=bool(body.get('preview')))
+    if not body.get('preview'):
+        audit('firewall-delete', out['commands'][0])
+        perf.invalidate('status')
+    return out
+
+
+@route('POST', '/api/firewall/power', role='super_admin')
+def api_firewall_power(qs, body):
+    out = firewall.power(cfg(), bool(body.get('on')), body.get('confirm'), preview=bool(body.get('preview')))
+    if not body.get('preview'):
+        audit('firewall-' + ('on' if body.get('on') else 'off'))
+        perf.invalidate('status')
+    return out
+
+
 @route('POST', '/api/policy', role='super_admin')
 def api_policy(qs, body):
     on = bool(body.get('require_2fa'))
@@ -544,7 +607,10 @@ def api_mssql_drop(qs, body):
 
 @route('POST', '/api/databases/backup')
 def api_db_backup(qs, body):
-    out = dbops.backup(cfg(), body.get('name', ''))
+    engine = body.get('engine') or 'postgres'
+    if engine not in ('postgres', 'mysql'):
+        raise ValueError('Engine must be postgres or mysql')
+    out = dbops.backup(cfg(), body.get('name', ''), engine)
     audit('db-backup', body.get('name', ''), out['file'])
     return out
 
@@ -951,8 +1017,8 @@ def api_keys(qs, body):
 @route('POST', '/api/keys/create', role='super_admin')
 def api_keys_create(qs, body):
     browser_only()
-    token, entry = apikeys.create(body.get('name', ''))
-    audit('api-key-create', entry['name'])
+    token, entry = apikeys.create(body.get('name', ''), body.get('scope') or 'admin', body.get('days') or 0)
+    audit('api-key-create', entry['name'], entry['scope'])
     return {'token': token, 'key': entry}
 
 
@@ -1255,11 +1321,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def identify(self):
         """Work out who is calling: API key, signed-in account (login mode) or the launch-token cookie (token mode)."""
         ctx.user, ctx.via_key, ctx.cookies, ctx.session_token, ctx.ip = None, False, [], '', self.client_ip()
+        ctx.key_scope = ''
         authz = self.headers.get('Authorization', '')
         if authz.startswith('Bearer '):
-            if apikeys.verify(authz[7:].strip()):
-                ctx.via_key = True
-                ctx.user = {'id': 0, 'email': 'api-key', 'role': 'admin'}
+            key = apikeys.verify(authz[7:].strip())
+            if key:
+                ctx.via_key, ctx.key_scope = True, key['scope']
+                ctx.user = {'id': 0, 'email': 'api-key', 'role': 'viewer' if key['scope'] == 'viewer' else 'admin'}
             return
         jar = http.cookies.SimpleCookie()
         try:
@@ -1284,6 +1352,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             data = f.read()
         self.reply(data, 200, TYPES.get(os.path.splitext(full)[1], mimetypes.guess_type(full)[0] or 'application/octet-stream'), [('ETag', tag), ('Cache-Control', 'no-cache')])
 
+    def public_file(self, rel):
+        full = os.path.join(config.WEB, 'pub', rel)
+        with open(full, 'rb') as f:
+            data = f.read()
+        self.reply(data, 200, TYPES.get(os.path.splitext(rel)[1], mimetypes.guess_type(rel)[0] or 'application/octet-stream'),
+                   [('Cache-Control', 'no-cache')] + ([('Service-Worker-Allowed', '/')] if rel == 'sw.js' else []))
+
     def api(self, method, u, body):
         r = ROUTES.get((method, u.path))
         if not r:
@@ -1291,6 +1366,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not r['public']:
             if not ctx.user:
                 return self.reply({'error': 'Sign in required', 'auth': STATE['auth']}, 401)
+            if getattr(ctx, 'key_scope', '') == 'deploy' and u.path not in DEPLOY_KEY_PATHS:
+                return self.reply({'error': 'This API key can only deploy'}, 403)
             if self.blocked() and not (u.path.startswith('/api/auth/') or u.path == '/api/session'):
                 return self.reply({'error': MSG_2FA, 'need_2fa_setup': True}, 403)
             if auth.RANK[ctx.user['role']] < auth.RANK[r['role']]:
@@ -1412,6 +1489,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if (not login_mode or rel == 'manual.md') and not ctx.user:   # the sign-in page needs the app files; the manual needs sign-in
                 return self.reply({'error': 'not authorised'}, 401)
             return self.static(rel)
+        if u.path in PUBLIC_FILES:       # the public status page and the install files for the app: no sign-in, and no data of their own
+            return self.public_file(PUBLIC_FILES[u.path])
         if u.path == '/api/logs/stream':
             if not ctx.user:
                 return self.reply({'error': 'Sign in required', 'auth': STATE['auth']}, 401)
