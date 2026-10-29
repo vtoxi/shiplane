@@ -61,6 +61,23 @@ function PolicyCard() {
 }
 
 /** Settings, or (view 'integrations') the Integrations page: the same cards, split so connecting providers lives in one place. */
+export function SsoCard() {
+  const box = h('div', {}, Skeleton(3));
+  (async () => {
+    const c = await api('/api/sso');
+    const on = Switch({ label: 'Single sign-on (OpenID Connect)', description: 'Lets people sign in with Google, Microsoft, Okta, Keycloak and similar. Only people who already have an account here can sign in; SSO never creates accounts.', checked: c.enabled });
+    const f = { issuer: Input({ value: c.issuer, placeholder: 'https://accounts.google.com', mono: true }), id: Input({ value: c.client_id, mono: true }),
+      secret: Input({ type: 'password', placeholder: c.has_secret ? 'saved - leave empty to keep' : '', autocomplete: 'off' }), label: Input({ value: c.label || 'SSO' }), base: Input({ value: c.redirect_base, placeholder: 'https://shiplane.example.com (only if behind a proxy)', mono: true }) };
+    const save = Button({ label: 'Save', variant: 'primary', onClick: () => busy(save, async () => {
+      await attempt(api('/api/sso', { enabled: on.get(), issuer: f.issuer.value, client_id: f.id.value, client_secret: f.secret.value, label: f.label.value, redirect_base: f.base.value }), 'Saved');
+    }) });
+    box.replaceChildren(Card({ title: 'Single sign-on', subtitle: `Register this redirect address with your provider: ${(c.redirect_base || location.origin)}${c.callback}` }, on,
+      h('div', { class: 'mt-4 grid gap-4 sm:grid-cols-2' }, Field({ label: 'Issuer address' }, f.issuer), Field({ label: 'Button label' }, f.label), Field({ label: 'Client ID' }, f.id), Field({ label: 'Client secret' }, f.secret), Field({ label: 'Public address of this app' }, f.base)),
+      h('div', { class: 'mt-4' }, save)));
+  })().catch((e) => box.replaceChildren(Alert({ tone: 'bad', title: 'Could not load' }, e.message)));
+  return box;
+}
+
 export function SettingsPage({ view = 'settings' } = {}) {
   const s = store.session.server;
   const me = store.session.me;
@@ -393,7 +410,7 @@ export function SettingsPage({ view = 'settings' } = {}) {
     { id: 'git', label: 'Git providers', cards: [isSuper ? gitLoginCard() : null] },
     { id: 'alerts', label: 'Notifications', cards: [isSuper ? Card({ title: withHelp('Alert channels', 'alerts'), subtitle: 'Slack, Discord, Telegram, a webhook or e-mail' }, alertBox) : null] },
   ] : [
-    { id: 'account', label: 'Account and security', cards: [accountCard, loginMode ? TwoFactorCard() : null, isSuper && loginMode ? PolicyCard() : null] },
+    { id: 'account', label: 'Account and security', cards: [accountCard, loginMode ? TwoFactorCard() : null, isSuper && loginMode ? PolicyCard() : null, isSuper && loginMode ? SsoCard() : null] },
     { id: 'server', label: 'Server connection', cards: [connectionCard] },
     { id: 'monitoring', label: 'Monitoring', cards: [carePrefsCard(), isSuper ? uptimeCard() : null] },
     { id: 'performance', label: 'Performance', cards: [perfCard()] },

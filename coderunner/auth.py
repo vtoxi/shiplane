@@ -202,6 +202,16 @@ def session_user(token):
         return _public(row)
 
 
+def sso_login(email, ip='?'):
+    """Session for an email a sign-in provider has verified. Only existing, active accounts: SSO never creates one. Returns (token, user)."""
+    with _lock, _db() as c:
+        u = c.execute('SELECT * FROM users WHERE email=?', (normalize(email),)).fetchone()
+        if not u or u['status'] != 'active':
+            raise ValueError('There is no active account for that email. Ask an administrator to add it.')
+        token = _session(c, u, ip)
+        return token, _public(u)
+
+
 def logout(token):
     with _lock, _db() as c:
         c.execute('DELETE FROM sessions WHERE token_hash=?', (_hash_token(token or ''),))

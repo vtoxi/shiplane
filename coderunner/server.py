@@ -7,6 +7,7 @@ API keys (Authorization: Bearer crk_...) work in both modes. Every request must 
 browser writes also need a custom header. Remote commands only ever run allowlisted scripts with validated arguments.
 """
 import hmac
+import html
 import http.cookies
 import http.server
 import json
@@ -23,7 +24,7 @@ import traceback
 import time
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, activity, alerts, apikeys, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
+from . import __version__, activity, alerts, apikeys, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
 from .runner import explain_ssh as runner_explain, popen, q, run, who
 
 # CODERUNNER_TOKEN pins the launch token (token mode); otherwise a fresh one per launch.
@@ -100,7 +101,7 @@ def set_cookie(name, value, max_age):
 @route('GET', '/api/auth/me', public=True)
 def api_me(qs, body):
     u = getattr(ctx, 'user', None)
-    return {'auth': STATE['auth'], 'authenticated': bool(u), 'user': u, 'version': __version__}
+    return {'auth': STATE['auth'], 'authenticated': bool(u), 'user': u, 'version': __version__, 'sso': sso.login_button() if STATE['auth'] == 'login' else None}
 
 
 @route('POST', '/api/auth/login', public=True)
@@ -349,6 +350,20 @@ def api_db_verify(qs, body):
     job = backups.start_verify(cfg(), me()['email'] or who(cfg()), file)
     audit('backup-verify-start', file)
     return {'job': job}
+
+
+# ----------------------------------------------------------------------- sso
+@route('GET', '/api/sso', role='super_admin')
+def api_sso(qs, body):
+    return dict(sso.public(), callback='/api/auth/sso/callback')
+
+
+@route('POST', '/api/sso', role='super_admin')
+def api_sso_save(qs, body):
+    browser_only()
+    out = sso.save(body)
+    audit('sso-config', 'on' if out['enabled'] else 'off')
+    return out
 
 
 # ------------------------------------------------------------ status page, email
@@ -1366,6 +1381,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
             data = f.read()
         self.reply(data, 200, TYPES.get(os.path.splitext(full)[1], mimetypes.guess_type(full)[0] or 'application/octet-stream'), [('ETag', tag), ('Cache-Control', 'no-cache')])
 
+    def sso_redirect_uri(self):
+        base = sso.get()['redirect_base'] or ('https' if STATE['secure_cookies'] else 'http') + '://' + self.headers.get('Host', '')
+        return base + '/api/auth/sso/callback'
+
+    def sso_step(self, path, qs):
+        page = lambda msg: self.reply('<!doctype html><meta charset="utf-8"><title>Sign-in</title><body style="font:16px system-ui;max-width:30rem;margin:4rem auto;padding:0 1rem">'
+                                      '<p>%s</p><p><a href="/">Back to sign in</a></p>' % html.escape(msg), 400, 'text/html')
+        if STATE['auth'] != 'login':
+            return page('Sign-in is not enabled on this instance.')
+        try:
+            if path.endswith('/start'):
+                return self.reply('', 302, 'text/plain', [('Location', sso.start(self.sso_redirect_uri()))])
+            email = sso.finish(qs.get('code', [''])[0], qs.get('state', [''])[0])
+            token, user = auth.sso_login(email, ctx.ip)
+        except (ValueError, RuntimeError, PermissionError) as e:
+            activity.log('login-failed', 'sso', ctx.ip, '', False)
+            return page(str(e))
+        set_cookie(SESSION_COOKIE, token, auth.SESSION_MAX)
+        activity.log('login', user['email'], ctx.ip + ' (sso)', user['email'])
+        return self.reply('', 302, 'text/plain', [('Location', '/')])
+
     def public_file(self, rel):
         full = os.path.join(config.WEB, 'pub', rel)
         with open(full, 'rb') as f:
@@ -1516,6 +1552,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if (not login_mode or rel == 'manual.md') and not ctx.user:   # the sign-in page needs the app files; the manual needs sign-in
                 return self.reply({'error': 'not authorised'}, 401)
             return self.static(rel)
+        if u.path in ('/api/auth/sso/start', '/api/auth/sso/callback'):
+            return self.sso_step(u.path, qs)
         if u.path in PUBLIC_FILES:       # the public status page and the install files for the app: no sign-in, and no data of their own
             return self.public_file(PUBLIC_FILES[u.path])
         if u.path == '/api/logs/stream':
