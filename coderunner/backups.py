@@ -6,10 +6,10 @@ import time
 import json
 import re
 
-from . import activity, alerts, config, dbops, deploy, settings
+from . import activity, alerts, config, dbengines, dbops, deploy, settings
 from .runner import run, script
 
-DEFAULTS = {'enabled': False, 'hour': 3, 'keep': 14, 'last': None}   # hour is UTC
+DEFAULTS = {'enabled': False, 'hour': 3, 'keep': 14, 'verify': False, 'last': None}   # hour is UTC
 
 
 def get():
@@ -18,7 +18,7 @@ def get():
     return c
 
 
-def save(enabled, hour, keep):
+def save(enabled, hour, keep, verify=None):
     hour, keep = int(hour), int(keep)
     if not 0 <= hour <= 23:
         raise ValueError('Hour must be 0 to 23')
@@ -26,6 +26,8 @@ def save(enabled, hour, keep):
         raise ValueError('Keep between 1 and 90 backups per database')
     c = get()
     c.update(enabled=bool(enabled), hour=hour, keep=keep)
+    if verify is not None:
+        c['verify'] = bool(verify)
     settings.put('backups', c)
     return c
 
@@ -96,7 +98,7 @@ def prune(cfg, keep, lines=None):
     """Delete the oldest backups of each database beyond `keep` (manual ones count too)."""
     by = {}
     for b in dbops.list_all(cfg)['backups']:
-        by.setdefault(b['file'].rsplit('-', 2)[0], []).append(b['file'])
+        by.setdefault((b['file'].rsplit('-', 2)[0], dbops.engine_of(b['file'])), []).append(b['file'])     # a Postgres and a MySQL database of the same name are kept apart
     removed = 0
     for files in by.values():
         for f in sorted(files, reverse=True)[keep:]:
@@ -110,16 +112,23 @@ def prune(cfg, keep, lines=None):
 def run_all(cfg, say=print):
     """Back up every database except the system ones, then prune. Returns (ok, summary)."""
     c = get()
-    names = [d['name'] for d in dbops.list_all(cfg)['databases'] if d['name'] not in dbops.PROTECTED and config.DB_RE.match(d['name'])]
+    names = [(d['name'], 'postgres') for d in dbops.list_all(cfg)['databases'] if d['name'] not in dbops.PROTECTED and config.DB_RE.match(d['name'])]
+    try:
+        my = dbengines.mysql_state(cfg)
+        names += [(d['name'], 'mysql') for d in my['databases'] if my['running'] and d['name'] not in dbengines.MYSQL_PROTECTED and config.DB_RE.match(d['name'])]
+    except Exception:
+        pass     # MySQL is optional: a problem reading it must not stop the Postgres backups
     bad = []
-    for n in names:
-        say('Backing up %s ...' % n)
+    for n, engine in names:
+        say('Backing up %s%s ...' % (n, ' (MySQL)' if engine == 'mysql' else ''))
         try:
-            r = dbops.backup(cfg, n)
+            r = dbops.backup(cfg, n, engine)
             say('  %s (%d bytes)' % (r['file'], r['size']))
             if _offsite().get('bucket'):
                 _upload(cfg, dbops.backup_path(r['file']), r['file'])
                 say('  copied off the server')
+            if c['verify']:
+                say('  test restore: %d table(s) came back' % dbops.verify(cfg, r['file'])['tables'])
         except Exception as e:
             bad.append(n)
             say('  FAILED: %s' % e)
@@ -147,9 +156,28 @@ def start_run(cfg, who):
     return deploy.start_job(_job, cfg, who)
 
 
+def _verify_job(job, cfg, who, file):
+    job.say('Loading %s into a scratch database (the live data is not touched) ...' % file)
+    try:
+        r = dbops.verify(cfg, file)
+    except Exception as e:
+        activity.log('backup-verify', file, str(e)[:200], who, False)
+        alerts.notify('[Shiplane] Backup %s could NOT be restored: %s' % (file, e))
+        job.say('FAILED: %s' % e)
+        return
+    activity.log('backup-verify', file, '%d tables' % r['tables'], who, True)
+    job.ok = True
+    job.say('DONE: %s restores correctly (%d tables).' % (file, r['tables']))
+
+
+def start_verify(cfg, who, file):
+    dbops.backup_path(file)
+    return deploy.start_job(_verify_job, cfg, who, file)
+
+
 def _restore_job(job, cfg, who, name, file):
     job.say('Taking a safety backup of %s first ...' % name)
-    safe = dbops.backup(cfg, name)
+    safe = dbops.backup(cfg, name, dbops.engine_of(file))
     job.say('  saved as %s' % safe['file'])
     job.say('Restoring %s from %s ...' % (name, file))
     out = dbops.restore(cfg, name, file)

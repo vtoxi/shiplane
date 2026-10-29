@@ -7,6 +7,7 @@ API keys (Authorization: Bearer crk_...) work in both modes. Every request must 
 browser writes also need a custom header. Remote commands only ever run allowlisted scripts with validated arguments.
 """
 import hmac
+import html
 import http.cookies
 import http.server
 import json
@@ -17,11 +18,13 @@ import re
 import secrets
 import shutil
 import sys
+import tempfile
 import threading
+import traceback
 import time
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, activity, alerts, apikeys, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, maintenance, migrate, migrator, monitor, serverops, settings, uploads
+from . import __version__, activity, alerts, apikeys, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, fleet, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
 from .runner import explain_ssh as runner_explain, popen, q, run, who
 
 # CODERUNNER_TOKEN pins the launch token (token mode); otherwise a fresh one per launch.
@@ -36,9 +39,16 @@ STATE = {
 ROUTES = {}   # (method, path) -> {fn, role, public}
 ctx = threading.local()  # per request: user, via_key, ip, cookies to set
 TYPES = {'.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml',
-         '.json': 'application/json', '.md': 'text/markdown'}
+         '.json': 'application/json', '.md': 'text/markdown', '.webmanifest': 'application/manifest+json'}
 CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 SESSION_COOKIE = 'cr_session'
+PUBLIC_FILES = {'/status': 'status.html', '/pub/status.js': 'status.js', '/pub/status.css': 'status.css', '/pub/icon.svg': 'icon.svg',
+                '/pub/manifest.webmanifest': 'manifest.webmanifest', '/sw.js': 'sw.js'}
+# A user limited to some sites (users.sites) may call only these: the site name is in the body ('name') or the query string. Everything else is refused.
+SITE_BODY = {'/api/site/check', '/api/site/env', '/api/site/rename', '/api/site/run', '/api/deploy', '/api/action', '/api/git/save', '/api/git/key', '/api/git/deploy', '/api/git/disconnect'}
+SITE_QUERY = {'/api/site/env/values', '/api/logs', '/api/site/config', '/api/git', '/api/logs/stream'}
+SCOPED_OPEN = {'/api/session', '/api/status', '/api/job', '/api/health', '/api/monitor', '/api/upload', '/api/routes'}
+DEPLOY_KEY_PATHS = {'/api/deploy', '/api/job', '/api/status', '/api/upload', '/api/session'}   # what a deploy-only API key may call
 MAX_JSON = 2 * 1024 * 1024        # API bodies are small; a bigger one is refused before it is read into memory
 
 
@@ -91,7 +101,7 @@ def set_cookie(name, value, max_age):
 @route('GET', '/api/auth/me', public=True)
 def api_me(qs, body):
     u = getattr(ctx, 'user', None)
-    return {'auth': STATE['auth'], 'authenticated': bool(u), 'user': u, 'version': __version__}
+    return {'auth': STATE['auth'], 'authenticated': bool(u), 'user': u, 'version': __version__, 'sso': sso.login_button() if STATE['auth'] == 'login' else None}
 
 
 @route('POST', '/api/auth/login', public=True)
@@ -205,8 +215,9 @@ def api_users_create(qs, body):
 
 @route('POST', '/api/users/update', role='super_admin')
 def api_users_update(qs, body):
-    auth.update_user(int(body.get('id', 0)), me()['id'], body.get('role'), body.get('status'))
-    audit('user-update', str(body.get('id')), 'role=%s status=%s' % (body.get('role'), body.get('status')))
+    extra = {'sites': body['sites']} if 'sites' in body else {}
+    auth.update_user(int(body.get('id', 0)), me()['id'], body.get('role'), body.get('status'), **extra)
+    audit('user-update', str(body.get('id')), 'role=%s status=%s%s' % (body.get('role'), body.get('status'), ' sites=%s' % (body['sites'] or 'all') if 'sites' in body else ''))
     return {'ok': True}
 
 
@@ -314,7 +325,7 @@ def api_backup_offsite_test(qs, body):
 
 @route('POST', '/api/backups/schedule', role='admin')
 def api_backup_schedule_save(qs, body):
-    c = backups.save(body.get('enabled'), body.get('hour', 3), body.get('keep', 14))
+    c = backups.save(body.get('enabled'), body.get('hour', 3), body.get('keep', 14), body.get('verify'))
     audit('backup-schedule', '', 'enabled=%s hour=%s keep=%s' % (c['enabled'], c['hour'], c['keep']))
     return c
 
@@ -331,6 +342,131 @@ def api_db_restore(qs, body):
     job = backups.start_restore(cfg(), me()['email'] or who(cfg()), name, file, body.get('confirm'))
     audit('db-restore-start', name, file)
     return {'job': job}
+
+
+@route('POST', '/api/databases/verify', role='admin')
+def api_db_verify(qs, body):
+    file = str(body.get('file', ''))
+    job = backups.start_verify(cfg(), me()['email'] or who(cfg()), file)
+    audit('backup-verify-start', file)
+    return {'job': job}
+
+
+# ----------------------------------------------------------------------- fleet
+@route('GET', '/api/fleet', role='super_admin')
+def api_fleet(qs, body):
+    return fleet.list_servers()
+
+
+@route('GET', '/api/fleet/overview', role='super_admin')
+def api_fleet_overview(qs, body):
+    return {'servers': fleet.overview()}
+
+
+@route('POST', '/api/fleet/save', role='super_admin')
+def api_fleet_save(qs, body):
+    browser_only()
+    out = fleet.save(body)
+    audit('fleet-save', out['name'], out['host'])
+    return out
+
+
+@route('POST', '/api/fleet/delete', role='super_admin')
+def api_fleet_delete(qs, body):
+    browser_only()
+    fleet.delete(str(body.get('id', '')))
+    audit('fleet-delete', str(body.get('id', '')))
+    return {'ok': True}
+
+
+@route('POST', '/api/fleet/activate', role='super_admin')
+def api_fleet_activate(qs, body):
+    browser_only()
+    out = fleet.activate(str(body.get('id', '')))
+    audit('fleet-activate', out['name'], out['host'])
+    return out
+
+
+@route('POST', '/api/fleet/adopt', role='super_admin')
+def api_fleet_adopt(qs, body):
+    browser_only()
+    job = fleet.start_adopt(str(body.get('id', '')), body.get('confirm'))
+    audit('fleet-adopt', str(body.get('id', '')))
+    return {'job': job}
+
+
+# ----------------------------------------------------------------------- sso
+@route('GET', '/api/sso', role='super_admin')
+def api_sso(qs, body):
+    return dict(sso.public(), callback='/api/auth/sso/callback')
+
+
+@route('POST', '/api/sso', role='super_admin')
+def api_sso_save(qs, body):
+    browser_only()
+    out = sso.save(body)
+    audit('sso-config', 'on' if out['enabled'] else 'off')
+    return out
+
+
+# ------------------------------------------------------------ status page, email
+@route('GET', '/api/public/status', public=True)
+def api_public_status(qs, body):
+    return statuspage.public_data(qs.get('t', [''])[0])
+
+
+@route('GET', '/api/statuspage', role='super_admin')
+def api_statuspage(qs, body):
+    return statuspage.public_config()
+
+
+@route('POST', '/api/statuspage', role='super_admin')
+def api_statuspage_save(qs, body):
+    out = statuspage.save(body.get('enabled'), body.get('title'), body.get('sites') or [], bool(body.get('rotate')))
+    audit('statuspage', 'on' if out['enabled'] else 'off')
+    return out
+
+
+@route('GET', '/api/email/check', role='admin')
+def api_email_check(qs, body):
+    return emailcheck.check(qs.get('domain', [''])[0], [x for x in qs.get('selector', []) if x])
+
+
+# --------------------------------------------------------------------- firewall
+@route('GET', '/api/firewall', role='admin')
+def api_firewall(qs, body):
+    return firewall.status(cfg())
+
+
+def _fw_rule(body):
+    return str(body.get('action', '')), body.get('port', ''), str(body.get('proto') or 'tcp'), body.get('from') or 'any'
+
+
+@route('POST', '/api/firewall/add', role='admin')
+def api_firewall_add(qs, body):
+    out = firewall.add(cfg(), *_fw_rule(body), preview=bool(body.get('preview')))
+    if not body.get('preview'):
+        audit('firewall-add', out['commands'][0])
+        perf.invalidate('status')
+    return out
+
+
+@route('POST', '/api/firewall/delete', role='admin')
+def api_firewall_delete(qs, body):
+    out = firewall.delete(cfg(), *_fw_rule(body), preview=bool(body.get('preview')))
+    if not body.get('preview'):
+        audit('firewall-delete', out['commands'][0])
+        perf.invalidate('status')
+    return out
+
+
+@route('POST', '/api/firewall/power', role='super_admin')
+def api_firewall_power(qs, body):
+    out = firewall.power(cfg(), bool(body.get('on')), body.get('confirm'), preview=bool(body.get('preview')))
+    if not body.get('preview'):
+        audit('firewall-' + ('on' if body.get('on') else 'off'))
+        perf.invalidate('status')
+    return out
 
 
 @route('POST', '/api/policy', role='super_admin')
@@ -433,11 +569,40 @@ def api_site_run(qs, body):
     return {'ok': rc == 0, 'text': out.strip()}
 
 
+def check_source(app):
+    """A deploy publishes a folder of THIS computer on the internet, so it must not reach this app's own secrets.
+    Nobody may deploy a folder that is, holds or sits inside the data folder, the connection/provider files or SSH keys;
+    only a super admin may deploy any other folder by path (admins and API keys upload a zip)."""
+    real = os.path.realpath
+    src = real(app['source'])
+
+    def inside(path, folder):
+        return path == folder or path.startswith(folder + os.sep)
+    secrets_ = [real(p) for p in (config.DATA, config.SERVER_FILE, config.CF_FILE, os.path.join(config.CONF, 'dnsproviders.json'), os.path.expanduser('~/.ssh'),
+                                  os.path.expanduser('~/.aws'), os.path.expanduser('~/.gnupg'))]
+    if any(inside(p, src) or inside(src, p) for p in secrets_):
+        raise PermissionError("That folder holds this app's settings or keys and cannot be deployed")
+    tmp = real(tempfile.gettempdir())
+    rel = os.path.relpath(src, tmp)
+    uploaded = not rel.startswith('..') and rel.split(os.sep)[0].startswith(('coderunner-upload-', 'shiplane-empty-'))
+    if me()['role'] != 'super_admin' and not uploaded:
+        raise PermissionError('Only a super admin can deploy a folder by path. Upload it as a .zip instead')
+
+
 @route('POST', '/api/deploy')
 def api_deploy(qs, body):
     app = deploy.validate_app(deploy.with_starter(body) if body.get('empty') else body)
+    check_source(app)
     audit('deploy', app['name'], '%s (%s)%s' % (app['hostname'], app['type'], ', cloudflare' if app['mapCf'] else ''))
     return {'job': deploy.start_deploy(app, cfg(), me()['email'] or who(cfg()))}
+
+
+@route('POST', '/api/site/promote', role='admin')
+def api_site_promote(qs, body):
+    job = deploy.promote(cfg(), body)
+    audit('promote', '%s -> %s' % (body.get('from'), body.get('to')))
+    perf.invalidate('status')
+    return {'job': job}
 
 
 @route('POST', '/api/action')
@@ -513,7 +678,10 @@ def api_mssql_drop(qs, body):
 
 @route('POST', '/api/databases/backup')
 def api_db_backup(qs, body):
-    out = dbops.backup(cfg(), body.get('name', ''))
+    engine = body.get('engine') or 'postgres'
+    if engine not in ('postgres', 'mysql'):
+        raise ValueError('Engine must be postgres or mysql')
+    out = dbops.backup(cfg(), body.get('name', ''), engine)
     audit('db-backup', body.get('name', ''), out['file'])
     return out
 
@@ -874,6 +1042,19 @@ def api_care(qs, body):
     return care.report(cfg())
 
 
+@route('GET', '/api/care/preview', role='admin')
+def api_care_preview(qs, body):
+    return care.preview(cfg(), qs.get('fix', [''])[0])
+
+
+@route('POST', '/api/care/undo', role='super_admin')
+def api_care_undo(qs, body):
+    browser_only()
+    job = care.start_undo(cfg(), body.get('fix', ''), body.get('confirm'))
+    audit('care-undo', body.get('fix', ''), care.FIXES[body['fix']][1])
+    return {'job': job}
+
+
 @route('POST', '/api/care/fix', role='super_admin')
 def api_care_fix(qs, body):
     """Run one fix from the checklist (needs "confirm": "apply"). Progress: GET /api/job."""
@@ -920,8 +1101,8 @@ def api_keys(qs, body):
 @route('POST', '/api/keys/create', role='super_admin')
 def api_keys_create(qs, body):
     browser_only()
-    token, entry = apikeys.create(body.get('name', ''))
-    audit('api-key-create', entry['name'])
+    token, entry = apikeys.create(body.get('name', ''), body.get('scope') or 'admin', body.get('days') or 0)
+    audit('api-key-create', entry['name'], entry['scope'])
     return {'token': token, 'key': entry}
 
 
@@ -1183,6 +1364,15 @@ h1{font-size:1.25rem;margin:0 0 .75rem}code{background:#1c1c24;padding:.1rem .4r
 <p>Tip: set <code>CODERUNNER_TOKEN</code> to a secret of your own before starting, and the link stays the same every time.</p></main></body></html>"""
 
 
+def limit_sites(path, out, allowed):
+    """A copy of a status answer with only the sites a limited user may see (the cached original is never changed)."""
+    if path == '/api/status' and isinstance(out.get('sites'), list):
+        return dict(out, sites=[x for x in out['sites'] if x.get('name') in allowed])
+    if path == '/api/health' and isinstance(out.get('sites'), dict):
+        return dict(out, sites={k: v for k, v in out['sites'].items() if k in allowed})
+    return out
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -1224,11 +1414,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def identify(self):
         """Work out who is calling: API key, signed-in account (login mode) or the launch-token cookie (token mode)."""
         ctx.user, ctx.via_key, ctx.cookies, ctx.session_token, ctx.ip = None, False, [], '', self.client_ip()
+        ctx.key_scope = ''
         authz = self.headers.get('Authorization', '')
         if authz.startswith('Bearer '):
-            if apikeys.verify(authz[7:].strip()):
-                ctx.via_key = True
-                ctx.user = {'id': 0, 'email': 'api-key', 'role': 'admin'}
+            key = apikeys.verify(authz[7:].strip())
+            if key:
+                ctx.via_key, ctx.key_scope = True, key['scope']
+                ctx.user = {'id': 0, 'email': 'api-key', 'role': 'viewer' if key['scope'] == 'viewer' else 'admin'}
             return
         jar = http.cookies.SimpleCookie()
         try:
@@ -1253,6 +1445,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
             data = f.read()
         self.reply(data, 200, TYPES.get(os.path.splitext(full)[1], mimetypes.guess_type(full)[0] or 'application/octet-stream'), [('ETag', tag), ('Cache-Control', 'no-cache')])
 
+    def sso_redirect_uri(self):
+        base = sso.get()['redirect_base'] or ('https' if STATE['secure_cookies'] else 'http') + '://' + self.headers.get('Host', '')
+        return base + '/api/auth/sso/callback'
+
+    def sso_step(self, path, qs):
+        page = lambda msg: self.reply('<!doctype html><meta charset="utf-8"><title>Sign-in</title><body style="font:16px system-ui;max-width:30rem;margin:4rem auto;padding:0 1rem">'
+                                      '<p>%s</p><p><a href="/">Back to sign in</a></p>' % html.escape(msg), 400, 'text/html')
+        if STATE['auth'] != 'login':
+            return page('Sign-in is not enabled on this instance.')
+        try:
+            if path.endswith('/start'):
+                return self.reply('', 302, 'text/plain', [('Location', sso.start(self.sso_redirect_uri()))])
+            email = sso.finish(qs.get('code', [''])[0], qs.get('state', [''])[0])
+            token, user = auth.sso_login(email, ctx.ip)
+        except (ValueError, RuntimeError, PermissionError) as e:
+            activity.log('login-failed', 'sso', ctx.ip, '', False)
+            return page(str(e))
+        set_cookie(SESSION_COOKIE, token, auth.SESSION_MAX)
+        activity.log('login', user['email'], ctx.ip + ' (sso)', user['email'])
+        return self.reply('', 302, 'text/plain', [('Location', '/')])
+
+    def public_file(self, rel):
+        full = os.path.join(config.WEB, 'pub', rel)
+        with open(full, 'rb') as f:
+            data = f.read()
+        self.reply(data, 200, TYPES.get(os.path.splitext(rel)[1], mimetypes.guess_type(rel)[0] or 'application/octet-stream'),
+                   [('Cache-Control', 'no-cache')] + ([('Service-Worker-Allowed', '/')] if rel == 'sw.js' else []))
+
     def api(self, method, u, body):
         r = ROUTES.get((method, u.path))
         if not r:
@@ -1260,18 +1480,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not r['public']:
             if not ctx.user:
                 return self.reply({'error': 'Sign in required', 'auth': STATE['auth']}, 401)
+            if getattr(ctx, 'key_scope', '') == 'deploy' and u.path not in DEPLOY_KEY_PATHS:
+                return self.reply({'error': 'This API key can only deploy'}, 403)
             if self.blocked() and not (u.path.startswith('/api/auth/') or u.path == '/api/session'):
                 return self.reply({'error': MSG_2FA, 'need_2fa_setup': True}, 403)
             if auth.RANK[ctx.user['role']] < auth.RANK[r['role']]:
                 return self.reply({'error': 'Your role (%s) cannot do this' % ctx.user['role']}, 403)
+        limited = ctx.user.get('sites') if ctx.user else None
+        if limited is not None and ctx.user['role'] != 'super_admin' and not u.path.startswith('/api/auth/'):
+            name = body.get('name') if u.path in SITE_BODY else parse_qs(u.query).get('name', [''])[0] if u.path in SITE_QUERY else None
+            if u.path not in SCOPED_OPEN and (name is None or name not in limited):
+                return self.reply({'error': 'Your account is limited to some sites and cannot do this'}, 403)
         try:
-            return self.reply(r['fn'](parse_qs(u.query), body))
+            out = r['fn'](parse_qs(u.query), body)
+            if limited is not None and ctx.user['role'] != 'super_admin' and isinstance(out, dict):
+                out = limit_sites(u.path, out, limited)
+            return self.reply(out)
         except LookupError as e:
             return self.reply({'error': str(e)}, 404)
         except PermissionError as e:
             return self.reply({'error': str(e)}, 429 if str(e).startswith('Too many') else 403)
         except ValueError as e:
             return self.reply({'error': str(e)}, 400)
+        except (TypeError, KeyError):  # a value of the wrong type or a missing field in the request body: the caller's mistake, not a server fault
+            traceback.print_exc()
+            return self.reply({'error': 'Some values in the request are missing or have the wrong type'}, 400)
         except Exception as e:  # surface the reason in the UI
             return self.reply({'error': str(e)}, 500)
 
@@ -1285,6 +1518,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply({'error': MSG_2FA, 'need_2fa_setup': True}, 403)
         if auth.RANK[ctx.user['role']] < auth.RANK['admin']:
             return self.reply({'error': 'Your role (%s) cannot do this' % ctx.user['role']}, 403)
+        if ctx.user.get('sites') is not None and ctx.user['role'] != 'super_admin':
+            return self.reply({'error': 'Your account is limited to some sites and cannot do this'}, 403)
         try:
             path = dbops.backup_path(qs.get('file', [''])[0])
             c = cfg()
@@ -1310,6 +1545,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply({'error': MSG_2FA, 'need_2fa_setup': True}, 403)
         if auth.RANK[ctx.user['role']] < auth.RANK['admin']:
             return self.reply({'error': 'Your role (%s) cannot do this' % ctx.user['role']}, 403)
+        limited = ctx.user.get('sites')
+        if limited is not None and ctx.user['role'] != 'super_admin' and (qs.get('kind', ['site'])[0] != 'site' or qs.get('name', [''])[0] not in limited):
+            return self.reply({'error': 'Your account is limited to some sites and cannot do this'}, 403)
         if not perf.streams.acquire(timeout=0):
             return self.reply({'error': 'Too many live logs are open. Close one and try again.'}, 429)
         try:
@@ -1378,6 +1616,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if (not login_mode or rel == 'manual.md') and not ctx.user:   # the sign-in page needs the app files; the manual needs sign-in
                 return self.reply({'error': 'not authorised'}, 401)
             return self.static(rel)
+        if u.path in ('/api/auth/sso/start', '/api/auth/sso/callback'):
+            return self.sso_step(u.path, qs)
+        if u.path in PUBLIC_FILES:       # the public status page and the install files for the app: no sign-in, and no data of their own
+            return self.public_file(PUBLIC_FILES[u.path])
         if u.path == '/api/logs/stream':
             if not ctx.user:
                 return self.reply({'error': 'Sign in required', 'auth': STATE['auth']}, 401)

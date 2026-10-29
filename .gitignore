@@ -2,6 +2,7 @@
 server.json
 cloudflare.json
 dnsproviders.json
+fleet.json
 hetzner.json
 data/
 .env

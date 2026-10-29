@@ -142,5 +142,47 @@ def test_the_upload_script_signs_a_request_and_sends_it():
     assert h['Authorization'].startswith('AWS4-HMAC-SHA256 Credential=AKIA12345678/') and '/auto/s3/aws4_request' in h['Authorization'] and 'S' * 24 not in h['Authorization']
 
 
+def test_backup_verification_setting_job_and_nightly_run():
+    from coderunner import activity, dbops
+    assert backups.get()['verify'] is False and backups.save(True, 3, 5, True)['verify'] is True and backups.save(True, 3, 5)['verify'] is True    # omitted: unchanged
+    notes, logged, saved, orig = [], [], (dbops.verify, backups.alerts, backups.activity), (dbops.list_all, dbops.backup)
+    backups.alerts = type('A', (), {'notify': staticmethod(lambda t, site='': notes.append(t))})
+    backups.activity = type('L', (), {'log': staticmethod(lambda *a: logged.append(a))})
+    try:
+        dbops.verify = lambda cfg, f: {'file': f, 'tables': 4}
+        job = deploy.Job()
+        backups._verify_job(job, {}, 'me', 'shop-20260101-020000.sql.gz')
+        assert job.ok and 'restores correctly (4 tables)' in job.lines[-1] and logged[-1][-1] is True
+        dbops.verify = lambda cfg, f: (_ for _ in ()).throw(RuntimeError('NOT RESTORABLE: boom'))
+        job = deploy.Job()
+        backups._verify_job(job, {}, 'me', 'shop-20260101-020000.sql.gz')
+        assert not job.ok and job.lines[-1].startswith('FAILED') and 'could NOT be restored' in notes[-1] and logged[-1][-1] is False
+        try:
+            backups.start_verify({}, 'me', '../x')
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('accepted a bad file name')
+        # nightly: with the setting on, every new backup is test-restored
+        said = []
+        dbops.verify = lambda cfg, f: {'file': f, 'tables': 2}
+        dbops.list_all = lambda cfg: {'databases': [{'name': 'shop'}], 'backups': []}
+        dbops.backup = lambda cfg, n: {'file': n + '-20260101-020000.sql.gz', 'size': 5}
+        from coderunner import dbengines
+        real_my, calls = dbengines.mysql_state, []
+        dbengines.mysql_state = lambda cfg: {'installed': True, 'running': True, 'databases': [{'name': 'wp', 'size': 1}, {'name': 'sys', 'size': 1}]}
+        dbops.backup = lambda cfg, n, engine='postgres': calls.append((n, engine)) or {'file': n + '-20260101-020000' + ('.my' if engine == 'mysql' else '') + '.sql.gz', 'size': 5}
+        try:
+            backups.run_all({}, said.append)
+        finally:
+            dbengines.mysql_state = real_my
+        assert any('test restore: 2 table(s)' in l for l in said) and calls == [('shop', 'postgres'), ('wp', 'mysql')]      # system schemas are skipped
+        assert any('wp (MySQL)' in l for l in said)
+    finally:
+        dbops.verify, backups.alerts, backups.activity = saved
+        dbops.list_all, dbops.backup = orig
+        backups.save(False, 3, 14, False)
+
+
 if __name__ == '__main__':
     run_tests(globals())

@@ -58,7 +58,7 @@ def init(admin_email=''):
             CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created INTEGER, last INTEGER, ip TEXT);
             CREATE TABLE IF NOT EXISTS attempts (key TEXT PRIMARY KEY, n INTEGER, first INTEGER);''')
         have = {r['name'] for r in c.execute('PRAGMA table_info(users)')}
-        for col, ddl in (('totp_secret', 'TEXT'), ('totp_on', 'INTEGER DEFAULT 0'), ('totp_last', 'INTEGER DEFAULT 0'), ('recovery', 'TEXT')):
+        for col, ddl in (('totp_secret', 'TEXT'), ('totp_on', 'INTEGER DEFAULT 0'), ('totp_last', 'INTEGER DEFAULT 0'), ('recovery', 'TEXT'), ('sites', 'TEXT')):
             if col not in have:
                 c.execute('ALTER TABLE users ADD COLUMN %s %s' % (col, ddl))
         email = normalize(admin_email) if admin_email else ''
@@ -200,6 +200,16 @@ def session_user(token):
         if now - row['last'] > 60:
             c.execute('UPDATE sessions SET last=? WHERE token_hash=?', (int(now), row['token_hash']))
         return _public(row)
+
+
+def sso_login(email, ip='?'):
+    """Session for an email a sign-in provider has verified. Only existing, active accounts: SSO never creates one. Returns (token, user)."""
+    with _lock, _db() as c:
+        u = c.execute('SELECT * FROM users WHERE email=?', (normalize(email),)).fetchone()
+        if not u or u['status'] != 'active':
+            raise ValueError('There is no active account for that email. Ask an administrator to add it.')
+        token = _session(c, u, ip)
+        return token, _public(u)
 
 
 def logout(token):
@@ -386,7 +396,7 @@ def totp_reset(user_id):
 def _public(u):
     return {'id': u['id'], 'email': u['email'], 'role': u['role'], 'status': u['status'], 'created': u['created'],
             'last_login': u['last_login'], 'activated': bool(u['pw_hash']), 'totp': bool(u['totp_on']),
-            'recovery_left': len(json.loads(u['recovery'] or '[]'))}
+            'recovery_left': len(json.loads(u['recovery'] or '[]')), 'sites': json.loads(u['sites']) if u['sites'] else None}
 
 
 def list_users():
@@ -409,7 +419,20 @@ def _supers(c):
     return c.execute("SELECT COUNT(*) FROM users WHERE role='super_admin' AND status='active'").fetchone()[0]
 
 
-def update_user(user_id, actor_id, role=None, status=None):
+NAME_RE = re.compile(r'^[a-z][a-z0-9-]{0,40}$')
+ALL_SITES = object()
+
+
+def check_sites(sites):
+    """None = every site; otherwise a list of site names (a user limited to those sites, whatever their role short of super admin)."""
+    if sites is None:
+        return None
+    if not isinstance(sites, list) or len(sites) > 200 or any(not isinstance(x, str) or not NAME_RE.match(x) for x in sites):
+        raise ValueError('Sites must be a list of site names')
+    return sorted(set(sites))
+
+
+def update_user(user_id, actor_id, role=None, status=None, sites=ALL_SITES):
     with _lock, _db() as c:
         u = c.execute('SELECT * FROM users WHERE id=?', (user_id,)).fetchone()
         if not u:
@@ -420,6 +443,11 @@ def update_user(user_id, actor_id, role=None, status=None):
             if u['role'] == 'super_admin' and role != 'super_admin' and _supers(c) <= 1:
                 raise ValueError('There must be at least one active super admin')
             c.execute('UPDATE users SET role=? WHERE id=?', (role, user_id))
+        if sites is not ALL_SITES:
+            new = check_sites(sites)
+            if new is not None and (role or u['role']) == 'super_admin':
+                raise ValueError('A super admin always has every site')
+            c.execute('UPDATE users SET sites=? WHERE id=?', (json.dumps(new) if new is not None else None, user_id))
         if status is not None:
             if status not in ('active', 'disabled'):
                 raise ValueError('Bad status')

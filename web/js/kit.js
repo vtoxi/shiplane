@@ -205,7 +205,7 @@ export function PageHeader({ title, description, actions, crumbs }) {
       crumbs ? h('nav', { class: 'mb-1 flex items-center gap-1.5 text-xs text-muted', 'aria-label': 'Breadcrumb' },
         crumbs.map((c, i) => [i ? icon('chevron', 'h-3 w-3') : null, c.href ? h('a', { href: c.href, class: 'hover:text-ink' }, c.label) : h('span', { class: 'text-ink' }, c.label)])) : null,
       h('h1', { class: 'truncate text-xl' }, title),
-      description ? h('p', { class: 'mt-1 text-sm text-muted' }, description) : null),
+      description ? h('p', { class: 'mt-1 text-sm text-muted', style: 'white-space:pre-line' }, description) : null),
     actions ? h('div', { class: 'flex flex-wrap items-center gap-2' }, actions) : null);
 }
 
@@ -367,7 +367,7 @@ export function toast(message, { tone = 'info', title, timeout = 6000 } = {}) {
 export function openModal({ title, description, body, actions = [], size = 'md', onClose }) {
   const dlg = h('dialog', { class: 'modal' + (size === 'lg' ? ' !max-w-3xl' : ''), 'aria-labelledby': 'modal-title' },
     h('div', { class: 'flex items-start justify-between gap-4 px-6 pt-5' },
-      h('div', {}, h('h2', { id: 'modal-title', class: 'text-base' }, title), description ? h('p', { class: 'mt-1 text-sm text-muted' }, description) : null),
+      h('div', {}, h('h2', { id: 'modal-title', class: 'text-base' }, title), description ? h('p', { class: 'mt-1 text-sm text-muted', style: 'white-space:pre-line' }, description) : null),
       h('button', { class: 'rounded-md p-1 text-subtle hover:bg-sunken hover:text-ink', 'aria-label': 'Close', onClick: () => dlg.close() }, icon('x', 'h-4 w-4'))),
     body ? h('div', { class: 'px-6 py-4' }, body) : null,
     actions.length ? h('div', { class: 'flex justify-end gap-2 border-t border-line px-6 py-4' }, actions) : h('div', { class: 'pb-3' }));
