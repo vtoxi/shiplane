@@ -133,5 +133,41 @@ def test_upload_needs_a_session_and_refuses_bad_zips():
     assert s == 200 and os.path.isfile(os.path.join(json.loads(body)['path'], 'index.html'))
 
 
+def test_deploying_a_folder_cannot_reach_the_apps_own_secrets():
+    import tempfile
+    from coderunner import config, deploy
+    public = tempfile.mkdtemp()
+    open(os.path.join(public, 'index.html'), 'w').write('hi')
+    body = {'name': 'demo', 'hostname': 'demo.example.com', 'type': 'static'}
+    started = []
+    real = deploy.start_deploy
+    deploy.start_deploy = lambda app, cfg, user: started.append(app['source']) or 'job'
+    try:
+        fn = server.ROUTES[('POST', '/api/deploy')]['fn']
+        server.ctx.user = {'id': 1, 'email': 'a@example.com', 'role': 'super_admin'}
+        for bad in (config.DATA, os.path.dirname(config.DATA), os.path.expanduser('~/.ssh')):
+            os.makedirs(bad, exist_ok=True)
+            try:
+                fn({}, dict(body, source=bad))
+            except PermissionError as e:
+                assert 'settings or keys' in str(e), bad
+            else:
+                raise AssertionError('deployed ' + bad)
+        assert fn({}, dict(body, source=public)) == {'job': 'job'}                      # a super admin may deploy any other folder
+        server.ctx.user = {'id': 2, 'email': 'b@example.com', 'role': 'admin'}
+        try:
+            fn({}, dict(body, source=public))
+        except PermissionError as e:
+            assert 'super admin' in str(e)
+        else:
+            raise AssertionError('an admin deployed a folder by path')
+        s, _, out = req('POST', '/api/upload', headers=XRW, raw=make_zip({'index.html': 'hi'}))
+        uploaded = json.loads(out)['path']
+        assert fn({}, dict(body, source=uploaded)) == {'job': 'job'}                    # an admin may deploy what they uploaded
+    finally:
+        deploy.start_deploy = real
+        server.ctx.user = {'id': 1, 'email': 'root@example.com', 'role': 'super_admin'}
+
+
 if __name__ == '__main__':
     run_tests(dict(globals()))

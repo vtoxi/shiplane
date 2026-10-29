@@ -142,7 +142,7 @@ The files, service, database, releases and Git connection do not change. The old
 [Deploy](#/deploy) publishes a new site or a new version of an existing one.
 
 1. **Name and type.** The name becomes the folder, service and database name. Types: *Static*, *.NET*, *Node / SSR*, *PHP*, *Commands*, *Docker*.
-2. **Source.** A folder, an uploaded .zip, **From Git**, or **Empty site** (the address with a starter page, code later).
+2. **Source.** A folder, an uploaded .zip, **From Git**, or **Empty site** (the address with a starter page, code later). Only a super admin can deploy a folder by its path on the computer running the app, and nobody can deploy the app's own settings, data or SSH key folders; admins and API keys upload a .zip.
 3. **Address.** Pick a subdomain and one of your domains (the wildcard domains in [Settings, Server connection](#/settings?tab=server) plus the domains of your connected DNS providers).
 4. **Runtime** (apps only). DLL or start file, a local port (a free one is suggested), an optional Postgres database, environment variables.
 5. **DNS.** **Map the hostname in Cloudflare** (tunnel), or **Add an A record** in Route 53 / DigitalOcean (served directly with its own certificate). Only one of the two.

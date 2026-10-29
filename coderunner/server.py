@@ -17,6 +17,7 @@ import re
 import secrets
 import shutil
 import sys
+import tempfile
 import threading
 import traceback
 import time
@@ -434,9 +435,30 @@ def api_site_run(qs, body):
     return {'ok': rc == 0, 'text': out.strip()}
 
 
+def check_source(app):
+    """A deploy publishes a folder of THIS computer on the internet, so it must not reach this app's own secrets.
+    Nobody may deploy a folder that is, holds or sits inside the data folder, the connection/provider files or SSH keys;
+    only a super admin may deploy any other folder by path (admins and API keys upload a zip)."""
+    real = os.path.realpath
+    src = real(app['source'])
+
+    def inside(path, folder):
+        return path == folder or path.startswith(folder + os.sep)
+    secrets_ = [real(p) for p in (config.DATA, config.SERVER_FILE, config.CF_FILE, os.path.join(config.CONF, 'dnsproviders.json'), os.path.expanduser('~/.ssh'),
+                                  os.path.expanduser('~/.aws'), os.path.expanduser('~/.gnupg'))]
+    if any(inside(p, src) or inside(src, p) for p in secrets_):
+        raise PermissionError("That folder holds this app's settings or keys and cannot be deployed")
+    tmp = real(tempfile.gettempdir())
+    rel = os.path.relpath(src, tmp)
+    uploaded = not rel.startswith('..') and rel.split(os.sep)[0].startswith(('coderunner-upload-', 'shiplane-empty-'))
+    if me()['role'] != 'super_admin' and not uploaded:
+        raise PermissionError('Only a super admin can deploy a folder by path. Upload it as a .zip instead')
+
+
 @route('POST', '/api/deploy')
 def api_deploy(qs, body):
     app = deploy.validate_app(deploy.with_starter(body) if body.get('empty') else body)
+    check_source(app)
     audit('deploy', app['name'], '%s (%s)%s' % (app['hostname'], app['type'], ', cloudflare' if app['mapCf'] else ''))
     return {'job': deploy.start_deploy(app, cfg(), me()['email'] or who(cfg()))}
 
