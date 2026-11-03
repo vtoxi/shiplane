@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """One command to make GitHub deploy Shiplane to your server: SSH access, host key, and the repository's secrets and variables.
 
-    python scripts/setup_github_deploy.py --host server.example.com --user root --domain shiplane.example.com --admin-email you@example.com
+    python scripts/setup_github_deploy.py --host shiplane.uk --user root --domain shiplane.uk --admin-email faisalshafi69@gmail.com
+    python scripts/install_on_server.py --domain shiplane.uk --admin-email faisalshafi69@gmail.com
 
 Run it on your own computer (needs ssh, ssh-keygen, ssh-keyscan and the GitHub CLI `gh`, signed in with `gh auth login`). It:
   1. makes a new SSH key used only for deploying (no passphrase, so the workflow can use it),
@@ -11,6 +12,8 @@ Run it on your own computer (needs ssh, ssh-keygen, ssh-keyscan and the GitHub C
      creates the `production` environment, and (with --run) starts the first deploy,
   5. deletes the private key from this computer (it now lives only in GitHub; --keep-key keeps it).
 Secrets are sent to `gh` on stdin, never on a command line. Python standard library only.
+
+# 
 """
 import argparse
 import os
@@ -40,7 +43,7 @@ def check_args(a):
     if not 1 <= a.port <= 65535:
         raise ValueError('SSH port must be between 1 and 65535')
     if not re.match(r'^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$', a.domain):
-        raise ValueError('--domain must be a hostname like shiplane.example.com')
+        raise ValueError('--domain must be a hostname like shiplane.uk')
     if not EMAIL_RE.match(a.admin_email):
         raise ValueError('--admin-email does not look like an email address')
     if not REPO_RE.match(a.repo or ''):
@@ -68,7 +71,7 @@ def fingerprints(known_hosts, runner=run):
     return (r.stdout or b'').decode().strip()
 
 
-PLACEHOLDER = 'CHANGE-ME'
+PLACEHOLDER = 'faisalshafi69@gmail.com'
 
 
 def vars_only(a, runner=run):
@@ -77,7 +80,7 @@ def vars_only(a, runner=run):
         sys.exit('Could not work out the repository: pass --repo owner/name')
     need('gh')
     if a.domain and not re.match(r'^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$', a.domain):
-        sys.exit('--domain must be a hostname like shiplane.example.com')
+        sys.exit('--domain must be a hostname like shiplane.uk')
     if a.admin_email and not EMAIL_RE.match(a.admin_email):
         sys.exit('--admin-email does not look like an email address')
     env = runner(['gh', 'api', '-X', 'PUT', 'repos/%s/environments/production' % a.repo], capture_output=True)
@@ -85,7 +88,7 @@ def vars_only(a, runner=run):
     for name, value in (('DEPLOY_DOMAIN', a.domain or PLACEHOLDER), ('ADMIN_EMAIL', a.admin_email or PLACEHOLDER), ('DEPLOY_PORT', str(a.port))):
         gh_set('variable', name, value, a.repo, runner)
         print('variable %-14s %s' % (name, value) + ('   <- change this' if value == PLACEHOLDER else ''))
-    print('Set the missing ones with:  gh variable set DEPLOY_DOMAIN --repo %s --body shiplane.example.com' % a.repo)
+    print('Set the missing ones with:  gh variable set DEPLOY_DOMAIN --repo %s --body shiplane.uk' % a.repo)
 
 
 def main(argv=None, runner=run, ask=input):
@@ -94,7 +97,7 @@ def main(argv=None, runner=run, ask=input):
     ap.add_argument('--host', default='', help='the server address')
     ap.add_argument('--user', default='root', help='SSH user: root, or a user with passwordless sudo (default root)')
     ap.add_argument('--port', type=int, default=22)
-    ap.add_argument('--domain', default='', help='where Shiplane will be served, e.g. shiplane.example.com')
+    ap.add_argument('--domain', default='', help='where Shiplane will be served, e.g. shiplane.uk')
     ap.add_argument('--admin-email', default='', help='the first super admin')
     ap.add_argument('--repo', default='', help='owner/name (default: the origin remote of this folder)')
     ap.add_argument('--keep-key', action='store_true', help='keep the private key file on this computer')
