@@ -18,6 +18,8 @@
 * **Care fixes**: preview of the exact commands, a record of applied fixes, and Undo.
 * Status page: choose which sites it shows.
 
+* **GitHub Actions**: `deploy.yml` (deploys Shiplane to your server after the tests pass, pinned host key, optional approval) and the reusable `deploy-site.yml` (deploy a site from any repository with a deploy-only API key); `ci.yml` is callable.
+
 ### Fixed
 * `server_perf` test no longer races the server thread that releases its request slot.
 

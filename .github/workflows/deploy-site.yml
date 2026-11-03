@@ -1,0 +1,119 @@
+# Reusable workflow: deploy a folder (or a build of it) from ANY repository to a site on your Shiplane server.
+# It uses a deploy-only API key (Settings, API keys, scope "Deploy only"), so a leaked key can do nothing else.
+#
+# In the repository you want to deploy, add .github/workflows/deploy.yml:
+#
+#   on: { push: { branches: [main] } }
+#   jobs:
+#     deploy:
+#       uses: vtoxi/shiplane/.github/workflows/deploy-site.yml@v1      # pin a tag or commit, never a moving branch
+#       with:
+#         url: https://shiplane.example.com
+#         site: my-site
+#         folder: dist
+#         build-command: npm ci && npm run build
+#       secrets:
+#         key: ${{ secrets.SHIPLANE_KEY }}
+#
+# For the first deploy of a site also pass `hostname` and `type`. Full guide: docs/github-actions.md
+name: deploy-site
+on:
+  workflow_call:
+    inputs:
+      url:
+        description: Address of your Shiplane (https://shiplane.example.com)
+        type: string
+        required: true
+      site:
+        description: Site name
+        type: string
+        required: true
+      folder:
+        description: Folder to deploy, relative to the repository root (after the build)
+        type: string
+        default: '.'
+      build-command:
+        description: Optional command that creates the folder (for example "npm ci && npm run build")
+        type: string
+        default: ''
+      node-version:
+        description: Node version for the build command (empty = not installed)
+        type: string
+        default: ''
+      hostname:
+        description: First deploy only, the site's address
+        type: string
+        default: ''
+      type:
+        description: First deploy only, the site type (static, node, php, dotnet, command)
+        type: string
+        default: ''
+      extra-args:
+        description: More flags for shiplane-deploy.py, for example "--port 3000 --start server.js"
+        type: string
+        default: ''
+      shiplane-ref:
+        description: Tag or commit of Shiplane that provides the deploy script
+        type: string
+        default: main
+      shiplane-repo:
+        description: Repository that provides the deploy script
+        type: string
+        default: vtoxi/shiplane
+    secrets:
+      key:
+        description: A Shiplane API key with the "Deploy only" scope
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: shiplane-${{ inputs.site }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        if: inputs.node-version != ''
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Build
+        if: inputs.build-command != ''
+        env:
+          BUILD: ${{ inputs.build-command }}
+        run: bash -euo pipefail -c "$BUILD"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.shiplane-repo }}
+          ref: ${{ inputs.shiplane-ref }}
+          path: .shiplane-tools
+          sparse-checkout: scripts/shiplane-deploy.py
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Deploy
+        env:
+          SHIPLANE_URL: ${{ inputs.url }}
+          SHIPLANE_KEY: ${{ secrets.key }}
+          FOLDER: ${{ inputs.folder }}
+          SITE: ${{ inputs.site }}
+          HOSTNAME_FIRST: ${{ inputs.hostname }}
+          TYPE_FIRST: ${{ inputs.type }}
+          EXTRA: ${{ inputs.extra-args }}
+        run: |
+          args=(--site "$SITE")
+          [ -z "$HOSTNAME_FIRST" ] || args+=(--hostname "$HOSTNAME_FIRST")
+          [ -z "$TYPE_FIRST" ] || args+=(--type "$TYPE_FIRST")
+          # shellcheck disable=SC2206
+          args+=($EXTRA)
+          python .shiplane-tools/scripts/shiplane-deploy.py "$FOLDER" "${args[@]}"

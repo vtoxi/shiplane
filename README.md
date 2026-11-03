@@ -21,6 +21,7 @@ Needs only Python 3.8+ (and the `ssh` command when it controls a remote server).
 * **Your own nameservers and direct HTTPS**: run authoritative DNS (NSD) for your domains, edit records, open firewall ports only after you confirm, let sites answer on 443 themselves. **Connect your own Cloudflare account** from Settings with an API token.
 * **Deploy from Git**: connect a repository per site, deploy on demand or on every push (GitHub/GitLab webhook), optional npm build or your own commands, Docker and command sites, GitHub/GitLab sign-in to pick private repositories, new site straight from a repository, automatic rollback.
 * **Light on the server**: a few tens of MB at idle, a Light / Balanced / Full power profile you can switch in Settings, shared and cached status reads, bounded threads and logs.
+* **CI/CD**: GitHub Actions workflows deploy Shiplane itself and, as a reusable workflow, any site from any repository ([docs/github-actions.md](docs/github-actions.md)).
 * Everything is also available through a JSON API with API keys (`GET /api/routes`).
 
 ## Quick start

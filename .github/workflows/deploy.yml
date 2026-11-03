@@ -1,0 +1,83 @@
+# Deploys Shiplane itself to your server over SSH (scripts/install_on_server.py: upgrades the code, keeps settings, accounts and data).
+# Runs after the tests pass, on every push to main, or by hand from the Actions tab.
+#
+# One-time setup in the repository (Settings, Secrets and variables, Actions):
+#   environment  production           (Settings, Environments: add required reviewers there if you want an approval before each deploy)
+#   secret   DEPLOY_HOST              the server's address
+#   secret   DEPLOY_USER              the SSH user (root, or a user with passwordless sudo)
+#   secret   DEPLOY_SSH_KEY           the PRIVATE key for that user (a key made only for this)
+#   secret   DEPLOY_KNOWN_HOSTS       the server's host key, so the runner never trusts an unknown machine:  ssh-keyscan -p PORT HOST
+#   variable DEPLOY_DOMAIN            the address Shiplane is served on, e.g. shiplane.example.com
+#   variable ADMIN_EMAIL              the first super admin
+#   variable DEPLOY_PORT              optional, SSH port (default 22)
+# Full guide: docs/github-actions.md
+name: deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false      # never stop a deploy half way
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+      DEPLOY_DOMAIN: ${{ vars.DEPLOY_DOMAIN }}
+      ADMIN_EMAIL: ${{ vars.ADMIN_EMAIL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check the settings
+        run: |
+          for v in DEPLOY_HOST DEPLOY_USER DEPLOY_DOMAIN ADMIN_EMAIL; do
+            [ -n "${!v}" ] || { echo "::error::$v is not set (see the comment at the top of .github/workflows/deploy.yml)"; exit 1; }
+          done
+
+      - name: Prepare SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          [ -n "$SSH_KEY" ] || { echo "::error::DEPLOY_SSH_KEY is not set"; exit 1; }
+          [ -n "$KNOWN_HOSTS" ] || { echo "::error::DEPLOY_KNOWN_HOSTS is not set. Run: ssh-keyscan -p $DEPLOY_PORT $DEPLOY_HOST"; exit 1; }
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts && chmod 644 ~/.ssh/known_hosts
+          # the installer reads its SSH settings from server.json (git-ignored, lives only on this runner)
+          python - <<'PY'
+          import json, os
+          json.dump({'mode': 'ssh', 'auth': 'key', 'host': os.environ['DEPLOY_HOST'], 'port': int(os.environ['DEPLOY_PORT']), 'user': os.environ['DEPLOY_USER'],
+                     'key': os.path.expanduser('~/.ssh/deploy_key'), 'domains': []}, open('server.json', 'w'))
+          PY
+          chmod 600 server.json
+
+      - name: Install or upgrade Shiplane on the server
+        run: python scripts/install_on_server.py --domain "$DEPLOY_DOMAIN" --admin-email "$ADMIN_EMAIL"
+
+      - name: Check that it is running
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
+            'for i in 1 2 3 4 5 6 7 8 9 10; do curl -fsS http://127.0.0.1:8765/api/auth/me && exit 0; sleep 3; done; sudo systemctl status coderunner --no-pager || true; exit 1'
+
+      - name: Remove the key from the runner
+        if: always()
+        run: rm -f ~/.ssh/deploy_key server.json
