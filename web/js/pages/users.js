@@ -50,6 +50,14 @@ export function UsersPage() {
           h('p', { class: 'text-xs text-muted' }, u.activated ? (u.last_login ? 'Last sign-in ' + u.last_login : 'Never signed in') : 'Waiting for the person to set a password')) },
         { label: 'Role', render: (u) => Select({ value: u.role, options: ['viewer', 'admin', 'super_admin'].map((r) => ({ value: r, label: r.replace('_', ' ') })),
           onChange: async (v) => { if (!(await attempt(api('/api/users/update', { id: u.id, role: v }), 'Role changed'))) await load(); } }) },
+        { label: 'Sites', render: (u) => (u.role === 'super_admin' ? h('span', { class: 'text-muted' }, 'all') : Button({ label: u.sites ? u.sites.join(', ') || 'none' : 'all sites', size: 'sm', variant: 'ghost', title: 'Limit this person to some sites', onClick: async () => {
+          const box = Input({ value: (u.sites || []).join(', '), placeholder: 'shop, blog (empty = all sites)', mono: true });
+          const m = openModal({ title: `Sites for ${u.email}`, description: 'Comma-separated site names. A limited person sees and manages only these sites, and nothing server-wide (databases, firewall, settings).', body: Field({ label: 'Sites' }, box),
+            actions: [Button({ label: 'Save', variant: 'primary', onClick: async () => {
+              const list = box.value.split(',').map((x) => x.trim()).filter(Boolean);
+              if (await attempt(api('/api/users/update', { id: u.id, sites: list.length ? list : null }), 'Sites saved')) { m.close(); await load(); }
+            } })] });
+        } })) },
         { label: 'Status', render: (u) => h('div', { class: 'flex flex-wrap gap-1.5' }, Badge(u.status === 'active' ? (u.activated ? 'active' : 'invited') : 'disabled', u.status === 'active' ? (u.activated ? 'ok' : 'warn') : 'bad', { dot: true }), u.totp ? Badge('2FA', 'info') : null) },
         { label: '', class: 'text-right', render: (u) => h('div', { class: 'flex flex-wrap justify-end gap-2' },
           Button({ label: u.activated ? 'Reset password' : 'New code', size: 'sm', icon: 'refresh', onClick: async () => {

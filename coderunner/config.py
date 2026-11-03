@@ -88,11 +88,20 @@ def public_server(c):
     return out
 
 
+def _owner_only(fd):
+    """O_CREAT's mode only applies to a new file; tighten a file that already existed with looser permissions."""
+    try:
+        os.fchmod(fd, 0o600)
+    except (AttributeError, OSError):   # Windows has no fchmod
+        pass
+
+
 def save_server(c):
     data = resolve_server(c)
     os.makedirs(CONF, exist_ok=True)
     fd = os.open(SERVER_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)   # may hold a password: owner-only
     with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        _owner_only(fd)
         json.dump(data, f, indent=2)
 
 
@@ -113,6 +122,7 @@ def save_cloudflare(c):
     os.makedirs(CONF, exist_ok=True)
     fd = os.open(CF_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        _owner_only(fd)
         json.dump({k: c[k] for k in ('api_token', 'account_id', 'tunnel_id')}, f, indent=2)
 
 

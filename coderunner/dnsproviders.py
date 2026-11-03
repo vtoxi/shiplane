@@ -44,6 +44,7 @@ def _save(d):
     os.makedirs(config.CONF, exist_ok=True)
     fd = os.open(FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        config._owner_only(fd)
         json.dump(d, f, indent=2)
 
 

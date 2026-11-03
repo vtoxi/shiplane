@@ -61,6 +61,23 @@ function PolicyCard() {
 }
 
 /** Settings, or (view 'integrations') the Integrations page: the same cards, split so connecting providers lives in one place. */
+export function SsoCard() {
+  const box = h('div', {}, Skeleton(3));
+  (async () => {
+    const c = await api('/api/sso');
+    const on = Switch({ label: 'Single sign-on (OpenID Connect)', description: 'Lets people sign in with Google, Microsoft, Okta, Keycloak and similar. Only people who already have an account here can sign in; SSO never creates accounts.', checked: c.enabled });
+    const f = { issuer: Input({ value: c.issuer, placeholder: 'https://accounts.google.com', mono: true }), id: Input({ value: c.client_id, mono: true }),
+      secret: Input({ type: 'password', placeholder: c.has_secret ? 'saved - leave empty to keep' : '', autocomplete: 'off' }), label: Input({ value: c.label || 'SSO' }), base: Input({ value: c.redirect_base, placeholder: 'https://shiplane.example.com (only if behind a proxy)', mono: true }) };
+    const save = Button({ label: 'Save', variant: 'primary', onClick: () => busy(save, async () => {
+      await attempt(api('/api/sso', { enabled: on.get(), issuer: f.issuer.value, client_id: f.id.value, client_secret: f.secret.value, label: f.label.value, redirect_base: f.base.value }), 'Saved');
+    }) });
+    box.replaceChildren(Card({ title: 'Single sign-on', subtitle: `Register this redirect address with your provider: ${(c.redirect_base || location.origin)}${c.callback}` }, on,
+      h('div', { class: 'mt-4 grid gap-4 sm:grid-cols-2' }, Field({ label: 'Issuer address' }, f.issuer), Field({ label: 'Button label' }, f.label), Field({ label: 'Client ID' }, f.id), Field({ label: 'Client secret' }, f.secret), Field({ label: 'Public address of this app' }, f.base)),
+      h('div', { class: 'mt-4' }, save)));
+  })().catch((e) => box.replaceChildren(Alert({ tone: 'bad', title: 'Could not load' }, e.message)));
+  return box;
+}
+
 export function SettingsPage({ view = 'settings' } = {}) {
   const s = store.session.server;
   const me = store.session.me;
@@ -174,7 +191,9 @@ export function SettingsPage({ view = 'settings' } = {}) {
       keysBox.replaceChildren(Table({
         columns: [
           { label: 'Name', render: (k) => h('span', { class: 'font-medium' }, k.name) },
+          { label: 'Scope', class: 'text-muted', render: (k) => k.scope || 'admin' },
           { label: 'Created', class: 'text-muted', render: (k) => k.created },
+          { label: 'Expires', class: 'text-muted', render: (k) => k.expires ? new Date(k.expires * 1000).toLocaleDateString() : 'never' },
           { label: 'Last used', class: 'text-muted', render: (k) => k.last_used || 'never' },
           { label: '', class: 'text-right', render: (k) => Button({ label: 'Revoke', icon: 'trash', size: 'sm', variant: 'danger-soft', onClick: async () => {
             const c = await confirmDialog({ title: `Revoke "${k.name}"?`, message: 'Anything using this key stops working immediately.', confirmLabel: 'Revoke key' });
@@ -187,8 +206,10 @@ export function SettingsPage({ view = 'settings' } = {}) {
     } catch (e) { keysBox.replaceChildren(Alert({ tone: 'bad', title: 'Could not read the keys' }, e.message)); }
   }
   const keyName = Input({ placeholder: 'phone' });
+  const keyScope = Select({ value: 'admin', options: [{ value: 'admin', label: 'Admin (everything)' }, { value: 'viewer', label: 'Read-only' }, { value: 'deploy', label: 'Deploy only (for CI)' }] });
+  const keyDays = Input({ type: 'number', min: 0, value: '0' });
   const createKey = Button({ label: 'Create key', icon: 'plus', variant: 'primary', onClick: () => busy(createKey, async () => {
-    const r = await attempt(api('/api/keys/create', { name: keyName.value }));
+    const r = await attempt(api('/api/keys/create', { name: keyName.value, scope: keyScope.value, days: Number(keyDays.value) || 0 }));
     if (!r) return;
     keyName.value = '';
     const c = Console({ lines: [r.token] });
@@ -376,7 +397,7 @@ export function SettingsPage({ view = 'settings' } = {}) {
   if (isSuper) loadAlerts();
   sync();
   const apiKeysCard = isSuper ? Card({ title: 'API keys', subtitle: 'Let another program (for example a mobile app) call this API with "Authorization: Bearer <key>". See the Manual for the endpoint list.' },
-    h('div', { class: 'mb-4 flex flex-col gap-3 sm:flex-row sm:items-end' }, h('div', { class: 'sm:w-64' }, Field({ label: 'Key name' }, keyName)), createKey), keysBox) : null;
+    h('div', { class: 'mb-4 flex flex-col gap-3 sm:flex-row sm:items-end' }, h('div', { class: 'sm:w-64' }, Field({ label: 'Key name' }, keyName)), h('div', { class: 'sm:w-48' }, Field({ label: 'Scope' }, keyScope)), h('div', { class: 'sm:w-32' }, Field({ label: 'Expires in (days)', hint: '0 = never' }, keyDays)), createKey), keysBox) : null;
   const connectionCard = isSuper ? Card({ title: 'Connection', subtitle: 'Saved next to the app in server.json' },
     h('div', { class: 'space-y-4' }, h('div', {}, h('span', { class: 'label' }, 'Mode'), mode), sshFields, Field({ label: 'Domains served by the wildcard route', hint: 'Comma separated. Hostnames under these (one level) work without any Cloudflare change.' }, domains),
       h('div', { class: 'flex gap-2' }, test, save), result)) : null;
@@ -389,7 +410,7 @@ export function SettingsPage({ view = 'settings' } = {}) {
     { id: 'git', label: 'Git providers', cards: [isSuper ? gitLoginCard() : null] },
     { id: 'alerts', label: 'Notifications', cards: [isSuper ? Card({ title: withHelp('Alert channels', 'alerts'), subtitle: 'Slack, Discord, Telegram, a webhook or e-mail' }, alertBox) : null] },
   ] : [
-    { id: 'account', label: 'Account and security', cards: [accountCard, loginMode ? TwoFactorCard() : null, isSuper && loginMode ? PolicyCard() : null] },
+    { id: 'account', label: 'Account and security', cards: [accountCard, loginMode ? TwoFactorCard() : null, isSuper && loginMode ? PolicyCard() : null, isSuper && loginMode ? SsoCard() : null] },
     { id: 'server', label: 'Server connection', cards: [connectionCard] },
     { id: 'monitoring', label: 'Monitoring', cards: [carePrefsCard(), isSuper ? uptimeCard() : null] },
     { id: 'performance', label: 'Performance', cards: [perfCard()] },

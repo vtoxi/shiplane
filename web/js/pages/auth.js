@@ -78,6 +78,8 @@ export function AuthPage({ onDone }) {
   const seg = Segmented({ label: 'Sign in or set up', value: mode, onChange: (v) => { mode = v; paint(); },
     options: [{ value: 'signin', label: 'Sign in' }, { value: 'activate', label: 'Set up your account' }] });
   const segWrap = h('div', { class: 'mb-5 flex justify-center' }, seg);
+  const ssoBox = h('div', { class: 'mt-4' });
+  api('/api/auth/me').then((m) => { if (m && m.sso) ssoBox.replaceChildren(h('div', { class: 'mb-3 text-center text-xs text-subtle' }, 'or'), Button({ label: `Sign in with ${m.sso.label}`, class: 'w-full', onClick: () => { location.href = '/api/auth/sso/start'; } })); }).catch(() => {});
   paint();
   email.focus();
   return h('div', { class: 'flex min-h-screen items-center justify-center px-4 py-10' },
@@ -86,6 +88,6 @@ export function AuthPage({ onDone }) {
         h('span', { class: 'mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-brand text-brand-ink' }, icon('terminal', 'h-6 w-6')),
         h('h1', { class: 'text-xl' }, 'Shiplane'),
         h('p', { class: 'mt-1 text-sm text-muted' }, 'Sign in to manage sites and servers.')),
-      h('div', { class: 'card p-6' }, segWrap, msg, form),
+      h('div', { class: 'card p-6' }, segWrap, msg, form, ssoBox),
       h('p', { class: 'mt-6 text-center text-xs text-subtle' }, 'Access is limited to approved accounts. Too many wrong attempts lock sign-in for a few minutes.')));
 }

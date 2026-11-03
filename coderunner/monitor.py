@@ -86,6 +86,18 @@ def _save():
     os.replace(tmp, HEALTH_FILE)
 
 
+def switch_server():
+    """The managed server changed: uptime history and the metrics ring described the old one, so start them afresh."""
+    with _lock:
+        STATE.clear()
+        CODES.clear()
+        try:
+            _save()
+        except OSError:
+            pass
+    metricslog.reset()
+
+
 def _request(host, method):
     return urllib.request.Request('https://%s/' % host, method=method, headers={'User-Agent': 'coderunner-health'})
 

@@ -29,15 +29,16 @@ export function DatabasesPage() {
   function scheduleCard() {
     const sc = data.schedule;
     const on = Switch({ label: 'Back up every database each night', description: 'Dumps are kept on the server. Download them now and then to keep a copy off the server.', checked: sc.enabled });
+    const verify = Switch({ label: 'Test-restore each new backup', description: 'Loads the backup into a scratch database and drops it again, so you know it works before you need it. The live data is not touched.', checked: !!sc.verify });
     const hour = Select({ value: String(sc.hour), options: Array.from({ length: 24 }, (_, i) => ({ value: String(i), label: `${String(i).padStart(2, '0')}:00 UTC` })) });
     const keep = Input({ type: 'number', min: 1, value: String(sc.keep) });
     const save = Button({ label: 'Save schedule', variant: 'primary', onClick: () => busy(save, async () => {
-      if (await attempt(api('/api/backups/schedule', { enabled: on.get(), hour: Number(hour.value), keep: Number(keep.value) }), 'Schedule saved')) await load();
+      if (await attempt(api('/api/backups/schedule', { enabled: on.get(), hour: Number(hour.value), keep: Number(keep.value), verify: verify.get() }), 'Schedule saved')) await load();
     }) });
     const now = Button({ label: 'Back up everything now', icon: 'download', onClick: async () => { const r = await attempt(api('/api/backups/run', {})); if (r) showJob('Backup', r.job); } });
     const last = sc.last && sc.last.summary ? h('p', { class: 'mt-4 text-sm text-muted' }, `Last run: ${sc.last.t || '-'}: `, Badge(sc.last.ok === false ? 'failed' : sc.last.ok ? 'ok' : 'running', sc.last.ok === false ? 'bad' : sc.last.ok ? 'ok' : 'info'), ` ${sc.last.summary}`) : null;
     return Card({ title: withHelp('Automatic backups', 'backups-and-restore'), subtitle: 'Old backups beyond the limit are removed (manual ones count too)' },
-      on, h('div', { class: 'mt-4 grid gap-4 sm:grid-cols-2' }, Field({ label: 'Time of day' }, hour), Field({ label: 'Backups to keep per database' }, keep)),
+      on, h('div', { class: 'mt-3' }, verify), h('div', { class: 'mt-4 grid gap-4 sm:grid-cols-2' }, Field({ label: 'Time of day' }, hour), Field({ label: 'Backups to keep per database' }, keep)),
       h('div', { class: 'mt-4 flex flex-wrap gap-2' }, save, now), last);
   }
 
@@ -108,10 +109,12 @@ export function DatabasesPage() {
       columns: [
         { label: 'Database', render: (d) => h('span', { class: 'font-medium' }, d.name) },
         { label: 'Size', class: 'text-muted', render: (d) => bytes(d.size) },
-        { label: '', class: 'text-right', render: (d) => Button({ label: 'Drop', icon: 'trash', size: 'sm', variant: 'danger-soft', onClick: async () => {
-          const c = await confirmDialog({ title: `Drop ${d.name}?`, message: 'The database, its data and its user of the same name are deleted. There is no backup button for MySQL here yet: dump it first if you may need it.', confirmLabel: 'Drop database', requireText: d.name });
-          if (c.confirmed && await attempt(api('/api/dbengines/mysql/drop', { name: d.name, confirm: d.name }), `Dropped ${d.name}`)) await load();
-        } }) },
+        { label: '', class: 'text-right', render: (d) => h('div', { class: 'flex justify-end gap-2' },
+          Button({ label: 'Back up', icon: 'download', size: 'sm', onClick: function () { busy(this, async () => { const r = await attempt(api('/api/databases/backup', { name: d.name, engine: 'mysql' }), (x) => `Backup saved on the server: ${x.file} (${bytes(x.size)})`); if (r) await load(); }); } }),
+          Button({ label: 'Drop', icon: 'trash', size: 'sm', variant: 'danger-soft', onClick: async () => {
+            const c = await confirmDialog({ title: `Drop ${d.name}?`, message: 'The database, its data and its user of the same name are deleted. Take a backup first if you may need it.', confirmLabel: 'Drop database', requireText: d.name });
+            if (c.confirmed && await attempt(api('/api/dbengines/mysql/drop', { name: d.name, confirm: d.name }), `Dropped ${d.name}`)) await load();
+          } })) },
       ],
       rows: m.databases, empty: EmptyState({ icon: 'database', title: 'No databases', body: 'Create one above.' }) }))];
   }
@@ -158,7 +161,7 @@ export function DatabasesPage() {
   // Backups have their own tab: today they cover the PostgreSQL databases only, and the tab says so.
   function backupsTab() {
     return [
-      Alert({ tone: 'info', title: 'PostgreSQL databases only, for now' }, 'Nightly backups, the off-server copy and restore cover every PostgreSQL database. MySQL / MariaDB and SQL Server databases are not backed up by Shiplane yet: dump them yourself before risky changes.'),
+      Alert({ tone: 'info', title: 'PostgreSQL and MySQL / MariaDB' }, 'Nightly backups, the off-server copy, test restore and restore cover PostgreSQL and MySQL / MariaDB databases. SQL Server databases are not backed up by Shiplane yet: dump them yourself before risky changes.'),
       scheduleCard(),
       offsiteCard(),
       Card({ title: 'Backups', subtitle: 'Gzipped SQL dumps kept on the server in /var/backups/coderunner. Download them to keep a copy off the server.', bodyClass: '' },
@@ -169,8 +172,9 @@ export function DatabasesPage() {
             { label: 'Size', class: 'text-muted', render: (b) => bytes(b.size) },
             { label: '', class: 'text-right', render: (b) => h('div', { class: 'flex justify-end gap-2' },
               Button({ label: 'Download', icon: 'download', size: 'sm', href: `/api/databases/download?file=${encodeURIComponent(b.file)}` }),
+              Button({ label: 'Test restore', icon: 'check', size: 'sm', onClick: async () => { const r = await attempt(api('/api/databases/verify', { file: b.file })); if (r) showJob('Test restore', r.job); } }),
               Button({ label: 'Restore', icon: 'undo', size: 'sm', onClick: async () => {
-                const db = b.file.replace(/-\d{8}-\d{6}\.sql\.gz$/, '');
+                const db = b.file.replace(/-\d{8}-\d{6}(\.my)?\.sql\.gz$/, '');
                 const c = await confirmDialog({ title: `Restore ${db} from this backup?`, message: `${b.file}: the current data of ${db} is replaced by the backup. A safety backup of the current data is taken first. Connected apps are disconnected for a moment.`, confirmLabel: 'Restore', requireText: db });
                 if (!c.confirmed) return;
                 const r = await attempt(api('/api/databases/restore', { name: db, file: b.file, confirm: db }));

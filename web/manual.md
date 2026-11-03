@@ -142,7 +142,7 @@ The files, service, database, releases and Git connection do not change. The old
 [Deploy](#/deploy) publishes a new site or a new version of an existing one.
 
 1. **Name and type.** The name becomes the folder, service and database name. Types: *Static*, *.NET*, *Node / SSR*, *PHP*, *Commands*, *Docker*.
-2. **Source.** A folder, an uploaded .zip, **From Git**, or **Empty site** (the address with a starter page, code later).
+2. **Source.** A folder, an uploaded .zip, **From Git**, or **Empty site** (the address with a starter page, code later). Only a super admin can deploy a folder by its path on the computer running the app, and nobody can deploy the app's own settings, data or SSH key folders; admins and API keys upload a .zip.
 3. **Address.** Pick a subdomain and one of your domains (the wildcard domains in [Settings, Server connection](#/settings?tab=server) plus the domains of your connected DNS providers).
 4. **Runtime** (apps only). DLL or start file, a local port (a free one is suggested), an optional Postgres database, environment variables.
 5. **DNS.** **Map the hostname in Cloudflare** (tunnel), or **Add an A record** in Route 53 / DigitalOcean (served directly with its own certificate). Only one of the two.
@@ -301,6 +301,8 @@ Each code can be used once (a code that was just used is refused), and the app a
 **Automatic backups ([Databases, Backups](#/databases?tab=backups)).** Switch on **Back up every database each night**, choose the hour (UTC) and how many backups to keep per database. Old ones beyond the limit are deleted (manual backups count too). **Back up everything now** runs it immediately. Backups stay on the server in `/var/backups/coderunner`: download them now and then, because a backup on the same disk does not survive losing the server.
 
 **Restore.** On [Databases, Backups](#/databases?tab=backups) press **Restore**, type the database name to confirm. The app first takes a safety backup of the current data, loads the chosen backup into a fresh database, and only then swaps it in. If the backup cannot be loaded, the current data is untouched. Connected apps lose their connection for a moment.
+
+**Test restore.** A backup you have never restored is a guess. **Test restore** on a backup loads it into a scratch database, counts the tables that came back, and drops the scratch database again; the live data is never touched. Turn on **Test-restore each new backup** in the schedule card to do this for every nightly backup; a backup that cannot be restored raises an alert.
 
 **Automatic rollback on a bad deploy.** After a .NET or Node deploy the server waits up to about 25 seconds for the service to run and answer below HTTP 500. If it does not, the previous release is put back, the deploy shows "ROLLED BACK", and you get an alert. A first deploy has nothing to go back to, so it just reports the failure. Static sites cannot fail this way. Database and environment changes made by the deploy are not undone.
 
@@ -582,3 +584,31 @@ Everyone needs their **own** server user and SSH key, so that actions can be tra
 **Can two people use it at once?** Yes, each on their own computer with their own key. Activity shows who did what.
 
 **Where is my data?** Sites and databases are on the server. This app keeps only its settings and the activity log.
+
+
+## Firewall, email checks, status page and scoped API keys
+
+Screens: **Firewall & email** in the sidebar (Network group) has tabs for the firewall, the email check and the status page. The same things are available through the API (`GET /api/routes`).
+
+**Firewall (ufw).** `GET /api/firewall` shows the rules. `POST /api/firewall/add` and `/delete` take `{action: allow|deny|limit, port: "443" or "6000:6100", proto: tcp|udp|any, from: "any" or an IP/network}`; add `"preview": true` to see the exact commands without running them. Lock-out guard: SSH's port(s) (the saved port plus whatever sshd listens on) cannot be denied, and the last rule that lets SSH in cannot be removed. `POST /api/firewall/power` (super admin) turns the firewall on (SSH is allowed first) or off; type `"confirm": "firewall"`.
+
+**Email check.** `GET /api/email/check?domain=example.com[&selector=mysel]` reads MX, SPF, DKIM (common selectors plus yours) and DMARC over DNS-over-HTTPS and returns findings with a fix for each. It changes nothing.
+
+**Status page (super admin).** `POST /api/statuspage {enabled, title, sites, rotate}` turns on a read-only page at `/status?t=<token>`. It shows only the site names you choose, up/down and uptime: no addresses or server details. Share the link; `rotate: true` makes a new link and kills the old one. The app is also installable as a PWA (the service worker caches nothing).
+
+**Scoped API keys.** When creating a key choose a scope: `admin`, `viewer` (read-only) or `deploy` (only `/api/deploy`, `/api/upload`, `/api/job`, `/api/status`; made for CI), and an expiry in days (0 = never).
+
+**MySQL / MariaDB backups.** Back up, nightly schedule, test restore and restore now cover MySQL / MariaDB too (files end in `.my.sql.gz`). A MySQL restore is proven on a scratch database first, then the real database is emptied and loaded; the safety backup taken just before is the way back if that second load fails.
+
+
+## Several servers, single sign-on, people limited to some sites, staging and undo
+
+**All servers** (sidebar, super admin). Add several servers (SSH only). The list shows each server's health side by side (sites, memory, disk, failed services). One server is *active*: the one every other page manages and the one uptime checks, backups and auto-heal follow. **Manage** switches to another (the uptime history and live metrics start afresh, because they describe one server). **Prepare** (adopt) installs the tools Shiplane needs plus Caddy on a fresh Ubuntu/Debian server and creates its deploy folders; it does not change SSH, the firewall or existing sites. Run Server care afterwards. Connections are stored in `fleet.json` (owner-only, passwords never shown again).
+
+**Single sign-on** (Settings, Account and security, sign-in mode only, super admin). Works with any OpenID Connect provider (Google, Microsoft Entra, Okta, Keycloak, Authentik...). Register `https://your-address/api/auth/sso/callback` as the redirect address with the provider, then enter its issuer address, client ID and client secret. Only people who already have an account here can sign in; SSO never creates accounts. Put the public address in **Public address of this app** when Shiplane runs behind a proxy. Sign-in uses PKCE, a one-time state, and checks the provider's answer (issuer, audience, nonce, expiry, verified email). Two-factor is left to the provider.
+
+**Limit a person to some sites** (Users, Sites column). A limited person sees and manages only those sites (deploy, logs, environment, Git, restart) and nothing server-wide: no databases, firewall, settings, server care, other people's sites. Their role still applies (a limited viewer stays read-only). Super admins cannot be limited.
+
+**Staging and production.** Deploy a second site of the same type (for example `shop-staging`) and test there. On its **Manage** tab, **Promote to production** makes another site of the same type serve the same release. The production site keeps its address, environment variables and database; the same health check as a normal deploy runs and it goes back by itself if the check fails. Docker sites cannot be promoted. Releases are copied as they are, so apps that bake absolute paths in (for example a Python virtualenv) should be rebuilt instead.
+
+**Preview and undo for care fixes.** Before a fix runs, the confirmation shows the exact commands. Fixes that Shiplane applies are recorded on the server, and **Applied by Shiplane** (Server care page) lists them with **Undo** (type `undo`). Undo removes only what the fix added (SSH setting files, the fail2ban jail, the swap file, the update settings, the firewall switch, time sync) and never touches anything Shiplane did not apply.

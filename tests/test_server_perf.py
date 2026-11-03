@@ -40,7 +40,16 @@ def get(path, headers=None, method='GET'):
     return out
 
 
+def drain():
+    """A reply reaches the client a moment before the server thread gives its slot back: wait for that instead of racing it."""
+    for _ in range(150):
+        if perf.slots.busy == 0:
+            return
+        time.sleep(0.02)
+
+
 def restore():
+    drain()
     perf.slots.resize(perf.PROFILES['light']['threads'])
     perf.streams.resize(perf.PROFILES['light']['streams'])
     while perf.slots.busy > 0:
@@ -84,6 +93,7 @@ def test_oversized_api_bodies_are_refused_before_they_are_read():
 
 
 def test_extra_requests_get_a_clear_503_instead_of_piling_up_threads():
+    drain()
     perf.slots.resize(1)
     assert perf.slots.acquire(0)                                                                      # the only slot is taken
     t0 = time.time()
@@ -93,6 +103,7 @@ def test_extra_requests_get_a_clear_503_instead_of_piling_up_threads():
     assert r.status == 503 and r.getheader('Retry-After') == '2' and 1.5 < time.time() - t0 < 5 and perf.STATS['refused'] >= 1
     c.close()
     perf.slots.release()
+    drain()
     assert get('/api/session')[0] == 200                                                              # and service resumes at once when a slot frees
 
 

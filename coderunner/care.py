@@ -23,6 +23,8 @@ FIXES = {   # id -> (script file, button label)
     'time_sync': ('time_sync.sh', 'Synchronise the clock'),
     'swap': ('swap.sh', 'Add a swap file'),
 }
+MARK_DIR = '/var/lib/shiplane/applied'      # one file per fix that Shiplane applied: only those can be undone
+UNDO_CONFIRM = 'undo'
 BAD, WARN, OK = 'bad', 'warn', 'ok'
 WEIGHT = {'ssh_password': 20, 'firewall': 20, 'auto_updates': 15, 'ssh_root': 10, 'fail2ban': 10, 'swap': 10, 'disk': 10, 'exposed': 10, 'time_sync': 5, 'reboot': 5, 'memory': 5}
 
@@ -140,7 +142,41 @@ def fix_script(fix_id, raw, cfg):
         text = text.replace('__%s__' % key.upper(), val if re.fullmatch(r'[0-9 ,]*', val) else q(val))
     if re.search(r'__[A-Z_]+__', text):
         raise ValueError('Fix script has unfilled placeholders')
-    return 'set -euo pipefail\n' + text
+    return 'set -euo pipefail\n' + text.rstrip('\n') + '\nsudo mkdir -p %s && sudo touch %s/%s\n' % (MARK_DIR, MARK_DIR, fix_id)
+
+
+def preview(cfg, fix_id):
+    """What a fix would do, before anything runs: the commands (from fresh facts, exactly what Apply runs) and whether it can be undone."""
+    text = fix_script(fix_id, collect(cfg), cfg)
+    commands = [l.strip() for l in text.splitlines() if l.strip() and not l.startswith(('set -e', 'echo', '#')) and MARK_DIR not in l]
+    return {'id': fix_id, 'label': FIXES[fix_id][1], 'commands': commands, 'undoable': fix_id in FIXES}
+
+
+def applied(cfg):
+    """Fix ids Shiplane applied on this server and that are still marked (so they can be undone)."""
+    rc, out = run(cfg, 'ls -1 %s 2>/dev/null' % MARK_DIR, timeout=20)
+    return [i for i in out.split() if i in FIXES]
+
+
+def undo_script(fix_id):
+    if fix_id not in FIXES:
+        raise ValueError('Unknown fix')
+    return 'set -euo pipefail\n' + script('care/undo/' + FIXES[fix_id][0]).rstrip('\n') + '\nsudo rm -f %s/%s\n' % (MARK_DIR, fix_id)
+
+
+def start_undo(cfg, fix_id, confirm):
+    """Take back a fix Shiplane applied. Refuses anything it did not apply itself."""
+    if confirm != UNDO_CONFIRM:
+        raise ValueError('Confirm the undo first')
+    text = undo_script(fix_id)
+    if fix_id not in applied(cfg):
+        raise ValueError('Shiplane did not apply this fix on this server, so it will not undo it')
+    if any(not j.done and getattr(j, 'care', False) for j in deploy.JOBS.values()):
+        raise ValueError('Another fix is still running')
+    job = deploy.start_script_job(cfg, text)
+    deploy.JOBS[job].care = True
+    perf.invalidate()
+    return job
 
 
 def start_fix(cfg, fix_id, confirm):
@@ -167,4 +203,8 @@ def report(cfg):
                 f['fix'] = {'id': f['fix'], 'label': FIXES[f['fix']][1], 'blocked': ''}
             except ValueError as e:
                 f['fix'] = {'id': f['fix'], 'label': FIXES[f['fix']][1], 'blocked': str(e)}
+    try:
+        out['applied'] = [{'id': i, 'label': FIXES[i][1]} for i in applied(cfg)]
+    except Exception:
+        out['applied'] = []
     return out

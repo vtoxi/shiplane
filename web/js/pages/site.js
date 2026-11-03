@@ -1,9 +1,9 @@
-import { h, fill, Field, Button, Badge, Card, Table, EmptyState, Alert, PageHeader, Tabs, KeyValue, Console, Input, Textarea, Skeleton, icon, busy, confirmDialog, openModal, toast, serviceBadge, publicBadge, typeBadge } from '../kit.js';
+import { h, fill, Field, Select, Button, Badge, Card, Table, EmptyState, Alert, PageHeader, Tabs, KeyValue, Console, Input, Textarea, Skeleton, icon, busy, confirmDialog, openModal, toast, serviceBadge, publicBadge, typeBadge } from '../kit.js';
 import { store, subscribe, refresh, siteByName } from '../store.js';
 import { bytes, ago, releaseDate, every } from '../format.js';
 import { api } from '../api.js';
 import { navigate } from '../router.js';
-import { attempt, hostsOf } from '../util.js';
+import { attempt, hostsOf, watchJob } from '../util.js';
 import { LogViewer, Spark } from '../live.js';
 import { GitTab } from './gittab.js';
 import { withHelp } from '../help.js';
@@ -222,10 +222,31 @@ export function SitePage({ params, query }) {
       h('div', { class: 'flex flex-col gap-3 sm:flex-row sm:items-end' }, h('div', { class: 'min-w-0 flex-1' }, Field({ label: 'New address' }, host)), go));
   }
 
+  // Staging to production: this site's live release becomes another site's live release (same type), with the health gate and automatic rollback.
+  function promoteCard(s) {
+    const targets = (store.status ? store.status.sites : []).filter((x) => x.name !== s.name && x.type === s.type && x.name !== 'coderunner' && s.type !== 'docker');
+    if (!targets.length || s.name === 'coderunner') return null;
+    const to = Select({ value: targets[0].name, options: targets.map((x) => ({ value: x.name, label: `${x.name} (${x.hostname})` })) });
+    const go = Button({ label: 'Promote', icon: 'rocket', variant: 'primary', onClick: async () => {
+      const c = await confirmDialog({ title: `Promote ${s.name} to ${to.value}?`, message: `${to.value} will serve the release ${s.name} serves now. It keeps its own address, environment variables and database. If it fails its health check, ${to.value} goes back to its previous release by itself.`, confirmLabel: 'Promote', tone: 'primary', requireText: to.value });
+      if (!c.confirmed) return;
+      const r = await attempt(api('/api/site/promote', { from: s.name, to: to.value, confirm: to.value }));
+      if (!r) return;
+      const con = Console({ lines: [] });
+      openModal({ title: `Promoting to ${to.value}`, body: con.el, size: 'lg' });
+      const res = await watchJob(r.job, con);
+      toast(res.ok ? `${to.value} is updated` : 'Failed or rolled back: read the log', { tone: res.ok ? 'ok' : 'bad' });
+      await refresh({ quiet: true });
+    } });
+    return Card({ title: 'Promote to production', subtitle: 'Use this site as staging: test it here, then make another site of the same type serve the same release.' },
+      h('div', { class: 'flex flex-col gap-3 sm:flex-row sm:items-end' }, h('div', { class: 'min-w-0 flex-1' }, Field({ label: 'Production site' }, to)), go));
+  }
+
   function manage(s) {
     const hosts = hostsOf(s);
     return h('div', { class: 'space-y-6' },
       renameCard(s),
+      promoteCard(s),
       Card({ title: 'Service', subtitle: s.has_service ? 'Control the running process' : 'Static sites are served directly by Caddy; there is no process to control' },
         s.has_service ? h('div', { class: 'flex flex-wrap gap-2' },
           Button({ label: 'Restart', icon: 'refresh', onClick: () => action(s, 'restart', {}, 'Restarted') }),

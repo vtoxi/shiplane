@@ -34,16 +34,27 @@ def _hash(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+SCOPES = {'admin': 'Everything an admin can do', 'viewer': 'Read-only', 'deploy': 'Only deploy: upload a zip, start a deploy, follow its job and read the status (for CI)'}
+
+
 def _public(k):
-    return {'id': k['id'], 'name': k['name'], 'created': k['created'], 'last_used': k.get('last_used', '')}
+    return {'id': k['id'], 'name': k['name'], 'created': k['created'], 'last_used': k.get('last_used', ''),
+            'scope': k.get('scope', 'admin'), 'expires': k.get('expires', 0)}
 
 
-def create(name):
+def create(name, scope='admin', days=0):
+    """scope: admin / viewer / deploy. days: 0 = never expires."""
     name = str(name).strip()[:40]
+    if scope not in SCOPES:
+        raise ValueError('Scope must be one of: ' + ', '.join(SCOPES))
+    days = int(days or 0)
+    if not 0 <= days <= 3650:
+        raise ValueError('Expiry must be 0 (never) to 3650 days')
     if not name:
         raise ValueError('Give the key a name, for example "phone"')
     token = 'crk_' + secrets.token_urlsafe(32)
-    entry = {'id': secrets.token_hex(4), 'name': name, 'hash': _hash(token), 'created': time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime()), 'last_used': ''}
+    entry = {'id': secrets.token_hex(4), 'name': name, 'hash': _hash(token), 'created': time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime()), 'last_used': '',
+             'scope': scope, 'expires': int(time.time()) + days * 86400 if days else 0}
     with _lock:
         keys = _load()
         keys.append(entry)
@@ -52,15 +63,18 @@ def create(name):
 
 
 def verify(token):
+    """The key's public entry (with its scope) when the token is valid and not expired, else None."""
     h = _hash(token)
     with _lock:
         keys = _load()
         for k in keys:
             if hmac.compare_digest(k['hash'], h):
+                if k.get('expires') and k['expires'] < time.time():
+                    return None
                 k['last_used'] = time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())
                 _save(keys)
-                return True
-    return False
+                return _public(k)
+    return None
 
 
 def list_keys():
