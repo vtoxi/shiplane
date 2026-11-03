@@ -15,6 +15,7 @@ Running it again upgrades the code and keeps settings, accounts and data.
 """
 import argparse
 import os
+import re
 import shutil
 import sys
 import tarfile
@@ -71,6 +72,9 @@ CODERUNNER_DATA=$DATA
 ENV
 fi
 sudo chmod 600 $ENVF
+# >>> sync-hosts: the app only answers on the hostname it was installed for, so a changed --domain must change this too (the old hostname stops working)
+if sudo grep -q '^CODERUNNER_ALLOW_HOSTS=' $ENVF; then sudo sed -i "s/^CODERUNNER_ALLOW_HOSTS=.*/CODERUNNER_ALLOW_HOSTS=$DOMAIN/" $ENVF; else echo "CODERUNNER_ALLOW_HOSTS=$DOMAIN" | sudo tee -a $ENVF >/dev/null; fi
+# <<< sync-hosts
 # providers are connected per install in Settings; an old env token moves into cloudflare.json so the screen can change it
 if sudo grep -q '^CLOUDFLARE_API_TOKEN=' $ENVF; then
   sudo python3 - $ENVF $APP/cloudflare.json <<'PY'
@@ -126,7 +130,7 @@ sudo systemctl restart coderunner
 echo "== web address"
 sudo mkdir -p /etc/caddy/sites
 sudo tee /etc/caddy/sites/coderunner.caddy >/dev/null <<SITE
-http://$DOMAIN {
+__SITEHEAD__ {
 	encode gzip
 	reverse_proxy 127.0.0.1:8765
 }
@@ -142,6 +146,19 @@ echo "app answers: $OUT"
 echo "service: $(systemctl is-active coderunner)"
 [ -f $DATA/first-admin-code.txt ] && echo "FIRST_CODE_PENDING=yes" || echo "FIRST_CODE_PENDING=no"
 '''
+
+
+DOMAIN_RE = re.compile(r'^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$')
+
+
+def render(domain, admin_email, direct_https=False):
+    """The install script for one domain. direct_https: Caddy serves https://domain itself (Let's Encrypt; DNS must point at the server and ports 80/443 be open);
+    otherwise it serves plain http://domain behind a Cloudflare tunnel or another proxy that provides https."""
+    domain = domain.strip().lower()
+    if not DOMAIN_RE.match(domain):
+        raise ValueError('--domain must be a hostname like shiplane.example.com')
+    head = 'http://%s, https://%s' % (domain, domain) if direct_https else 'http://%s' % domain
+    return INSTALL.replace('__DOMAIN__', q(domain)).replace('__ADMIN__', q(admin_email.lower())).replace('__SITEHEAD__', head)
 
 
 def pack():
@@ -166,11 +183,15 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--domain', required=True, help='hostname the app will be served on, e.g. server.example.com')
     ap.add_argument('--admin-email', required=True, help='the first super admin (they set their own password)')
+    ap.add_argument('--direct-https', action='store_true', help="serve https://DOMAIN straight from this server (Let's Encrypt certificate); use it when DOMAIN points at the server's IP and not at a Cloudflare tunnel")
     args = ap.parse_args()
     cfg = config.load_server()
     if cfg.get('mode') == 'local':
         sys.exit('Run this from your own computer (server.json must be in "ssh" mode).')
-    script = INSTALL.replace('__DOMAIN__', q(args.domain)).replace('__ADMIN__', q(args.admin_email.lower()))
+    try:
+        script = render(args.domain, args.admin_email, args.direct_https)
+    except ValueError as e:
+        sys.exit(str(e))
 
     print('Packing the app ...')
     tgz = pack()
@@ -191,6 +212,9 @@ def main():
     if p.wait():
         sys.exit('install failed')
     print('\nDone. Open https://%s and choose "Set up your account".' % args.domain)
+    print('The app now answers only on %s; Caddy no longer serves any older hostname. If an old hostname used a Cloudflare tunnel route or DNS record, remove those too.' % args.domain)
+    if args.direct_https:
+        print('Direct HTTPS: %s must have an A record pointing at this server and ports 80 and 443 must be open for the certificate.' % args.domain)
     print('Get your one-time activation code with:\n  ssh %s%s@%s "sudo cat /var/lib/coderunner/first-admin-code.txt"' % ('-i %s ' % cfg['key'] if cfg['key'] else '', cfg['user'], cfg['host']))
 
 
