@@ -85,6 +85,9 @@ def vars_only(a, runner=run):
     for name, value in (('DEPLOY_DOMAIN', a.domain or PLACEHOLDER), ('ADMIN_EMAIL', a.admin_email or PLACEHOLDER), ('DEPLOY_PORT', str(a.port))):
         gh_set('variable', name, value, a.repo, runner)
         print('variable %-14s %s' % (name, value) + ('   <- change this' if value == PLACEHOLDER else ''))
+    if a.direct_https:
+        gh_set('variable', 'DEPLOY_DIRECT_HTTPS', 'true', a.repo, runner)
+        print('variable DEPLOY_DIRECT_HTTPS true')
     print('Set the missing ones with:  gh variable set DEPLOY_DOMAIN --repo %s --body shiplane.example.com' % a.repo)
 
 
@@ -94,6 +97,7 @@ def main(argv=None, runner=run, ask=input):
     ap.add_argument('--host', default='', help='the server address')
     ap.add_argument('--user', default='root', help='SSH user: root, or a user with passwordless sudo (default root)')
     ap.add_argument('--port', type=int, default=22)
+    ap.add_argument('--direct-https', action='store_true', help='the domain points straight at the server: Caddy serves https itself (sets DEPLOY_DIRECT_HTTPS=true). Leave off behind a Cloudflare tunnel')
     ap.add_argument('--domain', default='', help='where Shiplane will be served, e.g. shiplane.example.com')
     ap.add_argument('--admin-email', default='', help='the first super admin')
     ap.add_argument('--repo', default='', help='owner/name (default: the origin remote of this folder)')
@@ -146,7 +150,7 @@ def main(argv=None, runner=run, ask=input):
             private = f.read()
         for name, value in (('DEPLOY_HOST', a.host), ('DEPLOY_USER', a.user), ('DEPLOY_SSH_KEY', private), ('DEPLOY_KNOWN_HOSTS', known)):
             gh_set('secret', name, value, a.repo, runner)
-        for name, value in (('DEPLOY_DOMAIN', a.domain), ('ADMIN_EMAIL', a.admin_email), ('DEPLOY_PORT', port)):
+        for name, value in (('DEPLOY_DOMAIN', a.domain), ('ADMIN_EMAIL', a.admin_email), ('DEPLOY_PORT', port)) + ((('DEPLOY_DIRECT_HTTPS', 'true'),) if a.direct_https else ()):
             gh_set('variable', name, value, a.repo, runner)
         env = runner(['gh', 'api', '-X', 'PUT', 'repos/%s/environments/production' % a.repo], capture_output=True)
         print('     production environment ' + ('ready (add required reviewers on GitHub if you want an approval step)' if not env.returncode else 'NOT created (you may need admin rights): create it by hand in Settings, Environments'))

@@ -10,6 +10,7 @@
 #   variable DEPLOY_DOMAIN            the address Shiplane is served on, e.g. shiplane.example.com
 #   variable ADMIN_EMAIL              the first super admin
 #   variable DEPLOY_PORT              optional, SSH port (default 22)
+#   variable DEPLOY_DIRECT_HTTPS      optional, "true" when the domain points straight at the server (Caddy gets the certificate); leave unset behind a Cloudflare tunnel
 # Full guide: docs/github-actions.md
 name: deploy
 on:
@@ -39,6 +40,7 @@ jobs:
       DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
       DEPLOY_DOMAIN: ${{ vars.DEPLOY_DOMAIN }}
       ADMIN_EMAIL: ${{ vars.ADMIN_EMAIL }}
+      DIRECT_HTTPS: ${{ vars.DEPLOY_DIRECT_HTTPS }}
     steps:
       - uses: actions/checkout@v4
 
@@ -72,7 +74,10 @@ jobs:
           chmod 600 server.json
 
       - name: Install or upgrade Shiplane on the server
-        run: python scripts/install_on_server.py --domain "$DEPLOY_DOMAIN" --admin-email "$ADMIN_EMAIL"
+        run: |
+          extra=()
+          [ "$DIRECT_HTTPS" != "true" ] || extra+=(--direct-https)
+          python scripts/install_on_server.py --domain "$DEPLOY_DOMAIN" --admin-email "$ADMIN_EMAIL" "${extra[@]}"
 
       - name: Check that it is running
         run: |

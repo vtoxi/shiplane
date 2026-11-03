@@ -26,6 +26,10 @@ If you only want the environment and variables first (no SSH, no secrets), run `
 
 The sections below describe what the script sets, if you prefer to do it by hand.
 
+## Changing the address, or using HTTPS straight from the server
+
+`install_on_server.py` serves Shiplane as plain `http://DOMAIN` by default, which is right behind a Cloudflare tunnel (Cloudflare provides https). If `DOMAIN` points at the server's IP instead, `https://DOMAIN` shows nothing: set the repository variable `DEPLOY_DIRECT_HTTPS` to `true` (the workflow then passes `--direct-https`; DNS must have an A record to the server and ports 80 and 443 must be open). Changing `DEPLOY_DOMAIN` and deploying again moves Shiplane to the new address and the old one stops working. Remove the old address's Cloudflare tunnel route or DNS record yourself.
+
 ## 1. Deploy Shiplane itself (`deploy.yml`)
 
 It runs `scripts/install_on_server.py`, which upgrades the code on the server and keeps its settings, accounts and data (a first run also installs Caddy, cloudflared and the service).
