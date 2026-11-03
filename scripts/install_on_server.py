@@ -72,6 +72,7 @@ CODERUNNER_DATA=$DATA
 ENV
 fi
 sudo chmod 600 $ENVF
+OLDHOSTS=$(sudo grep '^CODERUNNER_ALLOW_HOSTS=' $ENVF 2>/dev/null | head -1 || true)      # remembered so a failed install can put it back
 # >>> sync-hosts: the app only answers on the hostname it was installed for, so a changed --domain must change this too (the old hostname stops working)
 if sudo grep -q '^CODERUNNER_ALLOW_HOSTS=' $ENVF; then sudo sed -i "s/^CODERUNNER_ALLOW_HOSTS=.*/CODERUNNER_ALLOW_HOSTS=$DOMAIN/" $ENVF; else echo "CODERUNNER_ALLOW_HOSTS=$DOMAIN" | sudo tee -a $ENVF >/dev/null; fi
 # <<< sync-hosts
@@ -148,6 +149,11 @@ if ! CHECK=$(sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfi
   fi
   if [ "$HAD" = yes ]; then sudo cp $BACKUP $SITEF; echo "the previous $SITEF was put back"; else sudo rm -f $SITEF; fi
   rm -f $BACKUP
+  # undo the allowed-hostname change too, or the app would refuse the address it was serving before
+  sudo sed -i '/^CODERUNNER_ALLOW_HOSTS=/d' $ENVF
+  [ -z "$OLDHOSTS" ] || echo "$OLDHOSTS" | sudo tee -a $ENVF >/dev/null
+  sudo systemctl restart coderunner
+  echo "the allowed hostname is back to: ${OLDHOSTS:-(not set)}"
   exit 1
 fi
 rm -f $BACKUP
