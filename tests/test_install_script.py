@@ -100,5 +100,48 @@ def test_a_good_caddy_check_writes_the_site():
     assert open(site).read().startswith('http://shiplane.uk, https://shiplane.uk {') and 'reverse_proxy 127.0.0.1:8765' in open(site).read()
 
 
+class _Proc:
+    def __init__(self, out):
+        self.stdin, self.stdout = type('S', (), {'write': lambda s, b: None, 'close': lambda s: None})(), type('O', (), {'read': lambda s: out})()
+
+
+def _preflight(remote_out, ips, reach_ok=True, behind=0, direct=True):
+    inst.popen = lambda cfg, cmd: _Proc(remote_out.encode())
+    inst.behind_origin = lambda: behind
+    def reach(port):
+        if not reach_ok:
+            raise OSError
+    def resolve(name):
+        if name not in ips:
+            raise OSError
+        return ips[name]
+    return inst.preflight({'host': 'srv.example'}, 'shiplane.uk', direct, resolve, reach)
+
+
+def test_preflight_stops_on_a_domain_another_site_already_uses():
+    problems, warns = _preflight('CONFLICT /etc/caddy/sites/shiplane.caddy\n', {'shiplane.uk': '1.1.1.1', 'srv.example': '1.1.1.1'})
+    assert len(problems) == 1 and 'shiplane.caddy' in problems[0] and not warns
+
+
+def test_preflight_warns_about_dns_ports_and_a_stale_checkout():
+    problems, warns = _preflight('', {'shiplane.uk': '9.9.9.9', 'srv.example': '1.1.1.1'}, reach_ok=False, behind=2)
+    text = ' '.join(warns)
+    assert not problems and '2 commit' in text and '9.9.9.9' in text and 'port 80' in text and 'port 443' in text
+    assert 'does not resolve' in ' '.join(_preflight('', {'srv.example': '1.1.1.1'})[1])
+    assert _preflight('', {}, direct=False) == ([], [])                                                  # a tunnel setup needs no A record or open ports
+
+
+def test_public_check_retries_then_reports_the_reason():
+    calls = []
+    def flaky(url):
+        calls.append(url)
+        if len(calls) < 3:
+            raise OSError('tls handshake')
+        return '{"auth": "login"}'
+    assert inst.check_public('shiplane.uk', tries=5, delay=0, fetch=flaky) == (True, 'https://shiplane.uk answers') and len(calls) == 3
+    ok, msg = inst.check_public('shiplane.uk', tries=2, delay=0, fetch=lambda u: '<html>other site</html>')
+    assert not ok and 'not with the app' in msg and 'ports 80 and 443' in msg
+
+
 if __name__ == '__main__':
     run_tests(dict(globals()))

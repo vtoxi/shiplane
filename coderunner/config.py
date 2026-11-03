@@ -49,6 +49,8 @@ def check_server(c):
     auth = 'password' if c.get('auth') == 'password' else 'key'
     host, user, key = str(c.get('host', '')).strip(), str(c.get('user', '')).strip(), str(c.get('key', '')).strip()
     password = str(c.get('password') or '')
+    if key and (re.search(r'PRIVATE KEY|[\r\n]', key) or len(key) > 300 or re.match(r'^[^\s/\\~]+@\S+\.\S+$', key)):
+        raise ValueError('The key setting is the path of the key FILE (for example ~/.ssh/id_ed25519), not the key itself or an e-mail address. Never paste a private key here')
     try:
         port = int(c.get('port') or 22)
     except (TypeError, ValueError):

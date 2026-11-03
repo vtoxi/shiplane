@@ -89,5 +89,13 @@ export function AuthPage({ onDone }) {
         h('h1', { class: 'text-xl' }, 'Shiplane'),
         h('p', { class: 'mt-1 text-sm text-muted' }, 'Sign in to manage sites and servers.')),
       h('div', { class: 'card p-6' }, segWrap, msg, form, ssoBox),
+      h('details', { class: 'mt-4 text-xs text-muted' },
+        h('summary', { class: 'cursor-pointer text-center hover:text-ink' }, 'Forgot your password or lost your phone?'),
+        h('div', { class: 'mt-3 space-y-3 rounded-lg border border-line p-3 text-left' },
+          h('p', {}, 'Another super admin can reset you on the Users page. If you are the only one, run one of these on the server (over SSH), with your own email:'),
+          h('p', {}, h('b', {}, 'Forgot the password: '), 'prints a new one-time activation code. Use it under "Set up your account" to choose a new password.'),
+          h('code', { class: 'block break-all rounded bg-sunken p-2' }, 'sudo -u coderunner env CODERUNNER_DATA=/var/lib/coderunner python3 /opt/coderunner/app.py --reset-code you@example.com'),
+          h('p', {}, h('b', {}, 'Lost the authenticator app and recovery codes: '), 'turns two-factor off. It does not change the password.'),
+          h('code', { class: 'block break-all rounded bg-sunken p-2' }, 'sudo -u coderunner env CODERUNNER_DATA=/var/lib/coderunner python3 /opt/coderunner/app.py --reset-2fa you@example.com'))),
       h('p', { class: 'mt-6 text-center text-xs text-subtle' }, 'Access is limited to approved accounts. Too many wrong attempts lock sign-in for a few minutes.')));
 }

@@ -53,7 +53,9 @@ check('mapping again is idempotent (no writes)', out2 == ['Nothing to change: al
 out3 = cloudflare.unmap_hosts(['a.b.example.com', 'newapp.example.org', 'old.example.com'])
 check('unmap removes only those routes and CNAMEs', len(out3) == 4 and mock.pristine(), (out3, S['config']['ingress']))
 check('unmap never touches the wildcard, apex, TXT or foreign records', {r['id'] for r in S['records']} == {'r1', 'r2', 'r3', 'r4', 'r5'})
-check('unmapping nothing says so', cloudflare.unmap_hosts(['nothing.example.com']) == ['Nothing to remove in Cloudflare'])
+check('unmapping nothing says so', cloudflare.unmap_hosts(['nothing.example.org']) == ['Nothing to remove in Cloudflare'])
+wild = cloudflare.unmap_hosts(['nothing.example.com'])
+check('a host only a wildcard covers is explained and the wildcard stays', len(wild) == 1 and '*.example.com' in wild[0] and 'left alone' in wild[0] and {r['id'] for r in S['records']} == {'r1', 'r2', 'r3', 'r4', 'r5'}, wild)
 
 try:
     cloudflare.state(['x.nope.example'])

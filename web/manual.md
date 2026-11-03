@@ -48,6 +48,10 @@ python scripts/install_on_server.py --domain <shiplane-address> --admin-email <y
 
 It creates a system user `coderunner` (with passwordless sudo, because the app manages the server), puts the code in `/opt/coderunner`, keeps settings in `/etc/coderunner.env` (readable only by root), data in `/var/lib/coderunner`, starts a systemd service on `127.0.0.1:8765`, and adds the Caddy site for the domain. A hostname one level under a wildcard domain (like `server.example.com`) needs no Cloudflare change. Run the same command again later to **upgrade**: settings, accounts and data are kept.
 
+Before it uploads anything the installer checks that no other Caddy site already uses the domain (it stops if one does), and warns if your checkout is behind `origin`, the domain's A record does not point at the server, or ports 80/443 are not reachable (add `--direct-https` when the domain points straight at the server). When it finishes it opens `https://<domain>` from your computer and says plainly if the app is not reachable yet. It prints the activation-code command only when a first-admin code is actually waiting.
+
+**Moving to another address later.** Super admins can do it from [Settings, Server connection](#/settings?tab=server), **App address**: type the new hostname twice, choose direct HTTPS or tunnel, optionally move the Cloudflare tunnel route too (only the old hostname's own route and record go; a shared wildcard is never touched). Caddy is checked first and nothing changes if it refuses. The service restarts a few seconds later, so reopen the app at the new address. Running the installer again with the new `--domain` does the same.
+
 **First sign-in.** The `--admin-email` account is created without a password. Fetch its one-time activation code from the server, then open the site, choose **Set up your account**, and enter your email, the code and a password of your choice:
 
 ```
@@ -95,6 +99,8 @@ Run this on the server (over SSH). It prints a fresh activation code for an exis
 ```
 ssh <server-user>@<server-ip> "sudo -u coderunner env CODERUNNER_DATA=/var/lib/coderunner python3 /opt/coderunner/app.py --reset-code <your-email>"
 ```
+
+**Which command?** *Forgot the password* needs `--reset-code` above (a new one-time code, used under **Set up your account**). *Lost the authenticator app* needs `--reset-2fa` (see Two-factor sign-in); it removes two-factor but does not change the password. The sign-in page shows both under "Forgot your password or lost your phone?".
 
 ## The pages
 
@@ -467,6 +473,7 @@ An API key has the **admin** role. Errors come back as JSON `{"error": "..."}` w
 | `POST /api/mapping/check`, `/map`, `/unmap` | Cloudflare mapping |
 | `GET /api/keys`, `POST /api/keys/create`, `/revoke` | API keys (super admin, browser session only) |
 | `POST /api/auth/login`, `/activate`, `/logout`, `/change-password`, `GET /api/auth/me` | Sign-in (server mode) |
+| `GET /api/app-address`, `POST /api/app-address` | Read / move the hostname this app is served on (super admin) |
 | `GET /api/users`, `POST /api/users/create`, `/update`, `/reset-code`, `/reset-2fa`, `/delete` | Accounts (super admin) |
 | `GET/POST /api/alerts`, `POST /api/alerts/test`, `GET/POST /api/backups/schedule`, `POST /api/backups/run`, `POST /api/databases/restore`, `POST /api/policy` | Alerts, backup schedule and restore, security policy |
 | `POST /api/auth/login-2fa`, `/api/auth/2fa/start`, `/2fa/enable`, `/2fa/disable` | Two-factor sign-in (account sessions only, not API keys) |

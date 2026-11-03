@@ -24,7 +24,7 @@ import traceback
 import time
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, activity, alerts, apikeys, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, fleet, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
+from . import __version__, activity, alerts, apikeys, appaddress, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, fleet, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
 from .runner import explain_ssh as runner_explain, popen, q, run, who
 
 # CODERUNNER_TOKEN pins the launch token (token mode); otherwise a fresh one per launch.
@@ -559,6 +559,19 @@ def api_site_rename(qs, body):
     """Change a site's address everywhere: Caddy, metadata, optionally its environment and its Cloudflare / DNS records."""
     lines = deploy.rename_host(cfg(), body)
     audit('rename', body.get('name', ''), 'new address %s' % str(body.get('hostname', ''))[:120])
+    return {'lines': lines}
+
+
+@route('GET', '/api/app-address', role='super_admin')
+def api_app_address(qs, body):
+    return appaddress.show(cfg())
+
+
+@route('POST', '/api/app-address', role='super_admin')
+def api_app_address_change(qs, body):
+    """Move this app to a new hostname (Caddy + allowed host, optionally the Cloudflare route). The service restarts a few seconds after the answer."""
+    lines = appaddress.change(cfg(), body)
+    audit('app-address', str(body.get('hostname', ''))[:120], '; '.join(lines)[:300])
     return {'lines': lines}
 
 

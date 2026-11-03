@@ -125,6 +125,32 @@ export function SettingsPage({ view = 'settings' } = {}) {
     draw().catch((e) => box.replaceChildren(Alert({ tone: 'bad', title: 'Could not read the performance figures' }, e.message)));
     return Card({ title: 'Performance', subtitle: 'How much memory and CPU this app may use. Light is the default and is fast enough for most servers.' }, box);
   }
+  function appAddressCard() {
+    const box = h('div', {});
+    api('/api/app-address').then((r) => {
+      if (!r.installed) {
+        box.replaceChildren(Alert({ tone: 'info' }, 'This app was not installed on the server with scripts/install_on_server.py, so its address is not managed here.'));
+        return;
+      }
+      const host = Input({ mono: true, placeholder: 'shiplane.example.com', autocomplete: 'off' });
+      const confirm = Input({ mono: true, placeholder: 'type the new address again', autocomplete: 'off' });
+      const direct = Switch({ label: 'Serve https straight from this server', description: 'Caddy gets a Let\'s Encrypt certificate. The new address needs an A record to this server and ports 80 and 443 open. Leave off behind a Cloudflare tunnel or other proxy.', checked: r.direct });
+      const cf = Switch({ label: 'Also move the Cloudflare tunnel route', description: 'Adds the new address to the tunnel and removes the old address\'s own route and record. A wildcard route that other sites use is never touched. Ignored when Cloudflare is not connected or the switch above is on.', checked: false });
+      const go = Button({ label: 'Change address', variant: 'danger-soft', onClick: () => busy(go, async () => {
+        const c = await confirmDialog({ title: `Move this app to ${host.value.trim()}?`, message: `The old address (${r.hosts.join(', ') || 'none'}) stops working a few seconds later. If the new address is not set up in DNS yet, you cannot sign in until it is; the fix then is to run the installer again from your computer.`, confirmLabel: 'Move it' });
+        if (!c.confirmed) return;
+        const res = await attempt(api('/api/app-address', { hostname: host.value, confirm: confirm.value, direct: direct.get(), cloudflare: cf.get() }));
+        if (!res) return;
+        const url = `https://${host.value.trim().toLowerCase()}`;
+        box.replaceChildren(Alert({ tone: 'ok', title: 'Address changed' }, res.lines.join('\n')), h('p', { class: 'mt-3 text-sm' }, 'This page stops working in a few seconds. Open ', h('a', { href: url, class: 'underline' }, url), ' and sign in again.'));
+      }) });
+      box.replaceChildren(h('div', { class: 'space-y-4' },
+        KeyValue([['Answers on', r.hosts.join(', ') || 'not set'], ['HTTPS', r.direct ? 'directly from this server' : 'through a tunnel or proxy']]),
+        h('div', { class: 'grid gap-4 sm:grid-cols-2' }, Field({ label: 'New address' }, host), Field({ label: 'Confirm' }, confirm)),
+        direct, cf, go));
+    }).catch((e) => box.replaceChildren(Alert({ tone: 'bad', title: 'Could not read the app address' }, e.message)));
+    return Card({ title: 'App address', subtitle: 'The hostname this Shiplane is opened on' }, box);
+  }
   function gitLoginCard() {
     const box = h('div', { class: 'space-y-4' });
     api('/api/gitprov').then((r) => {
@@ -411,7 +437,7 @@ export function SettingsPage({ view = 'settings' } = {}) {
     { id: 'alerts', label: 'Notifications', cards: [isSuper ? Card({ title: withHelp('Alert channels', 'alerts'), subtitle: 'Slack, Discord, Telegram, a webhook or e-mail' }, alertBox) : null] },
   ] : [
     { id: 'account', label: 'Account and security', cards: [accountCard, loginMode ? TwoFactorCard() : null, isSuper && loginMode ? PolicyCard() : null, isSuper && loginMode ? SsoCard() : null] },
-    { id: 'server', label: 'Server connection', cards: [connectionCard] },
+    { id: 'server', label: 'Server connection', cards: [connectionCard, isSuper && loginMode ? appAddressCard() : null] },
     { id: 'monitoring', label: 'Monitoring', cards: [carePrefsCard(), isSuper ? uptimeCard() : null] },
     { id: 'performance', label: 'Performance', cards: [perfCard()] },
     { id: 'api', label: 'API keys', cards: [apiKeysCard] },

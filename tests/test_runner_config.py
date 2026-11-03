@@ -61,6 +61,14 @@ def test_check_server_rejects_bad_input():
         raises(config.check_server, dict(BASE, **bad), text=text)
 
 
+def test_a_pasted_key_or_an_email_is_refused_in_any_mode():
+    for bad in ('-----BEGIN OPENSSH PRIVATE KEY----- b3Blbn... -----END OPENSSH PRIVATE KEY-----', 'line1\nline2', 'you@example.com', 'x' * 301):
+        for mode in ('ssh', 'local'):
+            raises(config.check_server, dict(BASE, mode=mode, key=bad), text='path of the key FILE')
+    assert config.check_server(dict(BASE, mode='local', key=''))['key'] == '' and config.check_server(dict(BASE, key='~/.ssh/id_ed25519'))['key'] == '~/.ssh/id_ed25519'
+    assert config.check_server(dict(BASE, key='C:\\Users\\me@work\\.ssh\\id'))['key']                      # an @ inside a real path is fine
+
+
 def test_load_and_save_server():
     assert config.load_server() == config.DEFAULT_SERVER                                      # no file yet
     open(config.SERVER_FILE, 'w').write('{broken')

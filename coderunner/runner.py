@@ -66,7 +66,7 @@ def command(cfg, remote):
     else:
         key = os.path.expanduser(cfg['key'])
         if not os.path.isfile(key):
-            raise RuntimeError('SSH key not found: %s (set it in Settings)' % key)
+            raise RuntimeError('SSH key not found: %s (set it in Settings)' % (key if len(key) < 200 and 'PRIVATE KEY' not in key else 'the saved value is not a file path'))
         auth = ['-i', key, '-o', 'BatchMode=yes']
     port = ['-p', str(cfg.get('port') or 22)]
     return ['ssh'] + auth + port + common + ['%s@%s' % (cfg['user'], cfg['host']), remote]

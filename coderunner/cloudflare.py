@@ -230,4 +230,10 @@ def unmap_hosts(hosts):
             if r['type'] == 'CNAME' and r['content'] == target:
                 call('DELETE', '/zones/%s/dns_records/%s' % (zid, r['id']))
                 out.append('DNS CNAME removed: ' + h)
-    return out or ['Nothing to remove in Cloudflare']
+    if out:
+        return out
+    wild = sorted({r['hostname'] for r in ingress if r.get('hostname', '').startswith('*.') for h in hosts if covers(r['hostname'], h)})
+    if wild:
+        return ['Nothing to remove: %s has no route or record of its own. It is only covered by the wildcard %s, which other sites use, so the wildcard was left alone'
+                % (', '.join(hosts), ', '.join(wild))]
+    return ['Nothing to remove in Cloudflare']

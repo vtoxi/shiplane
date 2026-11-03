@@ -17,9 +17,13 @@ import argparse
 import os
 import re
 import shutil
+import socket
+import subprocess
 import sys
 import tarfile
 import tempfile
+import time
+import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -201,6 +205,65 @@ def pack():
     return path
 
 
+PREFLIGHT = r'''DOMAIN=__DOMAIN__
+sudo grep -lF -- "$DOMAIN" /etc/caddy/sites/*.caddy /etc/caddy/Caddyfile 2>/dev/null | grep -v '/coderunner\.caddy$' | sed 's/^/CONFLICT /' || true
+'''
+
+
+def behind_origin():
+    """How many commits origin/main has that this checkout lacks (0 when git or the network is unavailable)."""
+    try:
+        subprocess.run(['git', 'fetch', '-q'], cwd=ROOT, timeout=20, capture_output=True)
+        out = subprocess.run(['git', 'rev-list', '--count', 'HEAD..@{u}'], cwd=ROOT, timeout=10, capture_output=True, text=True).stdout.strip()
+        return int(out or 0)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0
+
+
+def preflight(cfg, domain, direct_https, resolve=socket.gethostbyname, reach=None):
+    """(problems, warnings) found before anything is uploaded. Problems stop the install, warnings only inform."""
+    problems, warns = [], []
+    n = behind_origin()
+    if n:
+        warns.append('this checkout is %d commit(s) behind origin; run "git pull" first or the server gets older code' % n)
+    p = popen(cfg, 'bash -s')
+    p.stdin.write(PREFLIGHT.replace('__DOMAIN__', q(domain)).encode())
+    p.stdin.close()
+    for line in p.stdout.read().decode('utf-8', 'replace').splitlines():
+        if line.startswith('CONFLICT '):
+            problems.append('%s already defines %s on the server (the installer needs the address for itself): move that file away or pick another domain' % (line[9:], domain))
+    if direct_https:
+        try:
+            ip, want = resolve(domain), resolve(cfg['host'])
+            if ip != want:
+                warns.append('%s resolves to %s but the server is %s (Let\'s Encrypt cannot issue a certificate until the A record points at it)' % (domain, ip, want))
+        except OSError:
+            warns.append('%s does not resolve yet: add an A record pointing at %s' % (domain, cfg['host']))
+        reach = reach or (lambda port: socket.create_connection((cfg['host'], port), 5).close())
+        for port in (80, 443):
+            try:
+                reach(port)
+            except OSError:
+                warns.append('port %d on %s is not reachable from here (open it in the provider firewall)' % (port, cfg['host']))
+    return problems, warns
+
+
+def check_public(domain, tries=6, delay=5, fetch=None):
+    """(ok, message): does https://domain answer with the app from outside? A fresh certificate can take a few seconds."""
+    fetch = fetch or (lambda url: urllib.request.urlopen(url, timeout=10).read().decode('utf-8', 'replace'))
+    err = ''
+    for i in range(tries):
+        try:
+            if '"auth"' in fetch('https://%s/api/auth/me' % domain):
+                return True, 'https://%s answers' % domain
+            err = 'answered, but not with the app'
+        except Exception as e:  # noqa: BLE001 - any failure (DNS, TLS, timeout, HTTP) is just "not yet"
+            err = str(getattr(e, 'reason', e))
+        if i < tries - 1:
+            time.sleep(delay)
+    return False, 'https://%s did not answer (%s): check the DNS record / tunnel route and that ports 80 and 443 are open' % (domain, err)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--domain', required=True, help='hostname the app will be served on, e.g. server.example.com')
@@ -215,6 +278,11 @@ def main():
     except ValueError as e:
         sys.exit(str(e))
 
+    problems, warns = preflight(cfg, args.domain.strip().lower(), args.direct_https)
+    for w in warns:
+        print('warning: ' + w)
+    if problems:
+        sys.exit('\n'.join('stopped: ' + m for m in problems))
     print('Packing the app ...')
     tgz = pack()
     print('Uploading %.2f MB to %s ...' % (os.path.getsize(tgz) / 1e6, cfg['host']))
@@ -229,15 +297,19 @@ def main():
     p = popen(cfg, 'bash -s')
     p.stdin.write(script.encode())
     p.stdin.close()
+    pending = False
     for line in iter(p.stdout.readline, b''):
-        print('  ' + line.decode('utf-8', 'replace').rstrip())
+        text = line.decode('utf-8', 'replace').rstrip()
+        pending = pending or text == 'FIRST_CODE_PENDING=yes'
+        print('  ' + text)
     if p.wait():
         sys.exit('install failed')
-    print('\nDone. Open https://%s and choose "Set up your account".' % args.domain)
-    print('The app now answers only on %s; Caddy no longer serves any older hostname. If an old hostname used a Cloudflare tunnel route or DNS record, remove those too.' % args.domain)
-    if args.direct_https:
-        print('Direct HTTPS: %s must have an A record pointing at this server and ports 80 and 443 must be open for the certificate.' % args.domain)
-    print('Get your one-time activation code with:\n  ssh %s%s@%s "sudo cat /var/lib/coderunner/first-admin-code.txt"' % ('-i %s ' % cfg['key'] if cfg['key'] else '', cfg['user'], cfg['host']))
+    ok, msg = check_public(args.domain.strip().lower())
+    print('\n%s: %s' % ('Done' if ok else 'Installed, but NOT reachable yet', msg))
+    print('The app now answers only on %s; Caddy no longer serves any older hostname. If an old hostname used its own Cloudflare tunnel route or DNS record, remove those too.' % args.domain)
+    if pending:
+        print('Open https://%s and choose "Set up your account". Get your one-time activation code with:\n  ssh %s%s@%s "sudo cat /var/lib/coderunner/first-admin-code.txt"' % (args.domain, '-i %s ' % cfg['key'] if cfg['key'] else '', cfg['user'], cfg['host']))
+    sys.exit(0 if ok else 1)
 
 
 if __name__ == '__main__':
