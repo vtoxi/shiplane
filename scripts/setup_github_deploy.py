@@ -68,13 +68,34 @@ def fingerprints(known_hosts, runner=run):
     return (r.stdout or b'').decode().strip()
 
 
+PLACEHOLDER = 'CHANGE-ME'
+
+
+def vars_only(a, runner=run):
+    """Create the production environment and the repository variables. Values not given become CHANGE-ME, which the workflow refuses to deploy with."""
+    if not REPO_RE.match(a.repo or ''):
+        sys.exit('Could not work out the repository: pass --repo owner/name')
+    need('gh')
+    if a.domain and not re.match(r'^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$', a.domain):
+        sys.exit('--domain must be a hostname like shiplane.example.com')
+    if a.admin_email and not EMAIL_RE.match(a.admin_email):
+        sys.exit('--admin-email does not look like an email address')
+    env = runner(['gh', 'api', '-X', 'PUT', 'repos/%s/environments/production' % a.repo], capture_output=True)
+    print('production environment: ' + ('ready' if not env.returncode else 'NOT created: %s' % (env.stderr or b'').decode().strip()))
+    for name, value in (('DEPLOY_DOMAIN', a.domain or PLACEHOLDER), ('ADMIN_EMAIL', a.admin_email or PLACEHOLDER), ('DEPLOY_PORT', str(a.port))):
+        gh_set('variable', name, value, a.repo, runner)
+        print('variable %-14s %s' % (name, value) + ('   <- change this' if value == PLACEHOLDER else ''))
+    print('Set the missing ones with:  gh variable set DEPLOY_DOMAIN --repo %s --body shiplane.example.com' % a.repo)
+
+
 def main(argv=None, runner=run, ask=input):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--host', required=True, help='the server address')
+    ap.add_argument('--vars-only', action='store_true', help='only create the production environment and the variables (placeholders CHANGE-ME for what you did not give); no SSH, no secrets')
+    ap.add_argument('--host', default='', help='the server address')
     ap.add_argument('--user', default='root', help='SSH user: root, or a user with passwordless sudo (default root)')
     ap.add_argument('--port', type=int, default=22)
-    ap.add_argument('--domain', required=True, help='where Shiplane will be served, e.g. shiplane.example.com')
-    ap.add_argument('--admin-email', required=True, help='the first super admin')
+    ap.add_argument('--domain', default='', help='where Shiplane will be served, e.g. shiplane.example.com')
+    ap.add_argument('--admin-email', default='', help='the first super admin')
     ap.add_argument('--repo', default='', help='owner/name (default: the origin remote of this folder)')
     ap.add_argument('--keep-key', action='store_true', help='keep the private key file on this computer')
     ap.add_argument('--run', action='store_true', help='start the first deploy when everything is saved')
@@ -83,6 +104,10 @@ def main(argv=None, runner=run, ask=input):
     if not a.repo:
         r = runner(['git', 'remote', 'get-url', 'origin'], capture_output=True)
         a.repo = repo_from_remote((r.stdout or b'').decode())
+    if a.vars_only:
+        return vars_only(a, runner)
+    if not (a.host and a.domain and a.admin_email):
+        sys.exit('--host, --domain and --admin-email are required (or use --vars-only)')
     try:
         check_args(a)
     except ValueError as e:

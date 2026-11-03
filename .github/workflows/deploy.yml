@@ -50,6 +50,7 @@ jobs:
         run: |
           for v in DEPLOY_HOST DEPLOY_USER DEPLOY_DOMAIN ADMIN_EMAIL; do
             [ -n "${!v}" ] || { echo "::error::$v is not set (see the comment at the top of .github/workflows/deploy.yml)"; exit 1; }
+            case "${!v}" in *CHANGE-ME*) echo "::error::$v still has the placeholder CHANGE-ME: set the real value (Settings, Secrets and variables, Actions, Variables)"; exit 1;; esac
           done
 
       - name: Prepare SSH

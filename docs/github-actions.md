@@ -22,6 +22,8 @@ It makes a key used only for deploying, installs its public half on the server (
 
 **Important:** `deploy.yml` runs on pushes to `main`, and "Run workflow" only appears once the file is on the default branch. Until the pull request is merged, the Actions tab shows only the tests.
 
+If you only want the environment and variables first (no SSH, no secrets), run `python scripts/setup_github_deploy.py --vars-only --repo owner/name --domain shiplane.example.com`. Anything you do not pass becomes `CHANGE-ME`, and the deploy refuses to run while a `CHANGE-ME` is left. Change a value later with `gh variable set ADMIN_EMAIL --repo owner/name --body you@example.com`.
+
 The sections below describe what the script sets, if you prefer to do it by hand.
 
 ## 1. Deploy Shiplane itself (`deploy.yml`)
