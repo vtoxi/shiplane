@@ -601,6 +601,10 @@ Screens: **Firewall & email** in the sidebar (Network group) has tabs for the fi
 **MySQL / MariaDB backups.** Back up, nightly schedule, test restore and restore now cover MySQL / MariaDB too (files end in `.my.sql.gz`). A MySQL restore is proven on a scratch database first, then the real database is emptied and loaded; the safety backup taken just before is the way back if that second load fails.
 
 
+## The Sites page: grouped by domain
+
+Sites that share a main domain are grouped under it: `shop.example.com`, `blog.example.com` and `example.com` appear under one **example.com** row with the number of subdomains, how many sites need attention, the number of sites, the main site if there is one, and the memory they use together. Click the row (or press Enter) to open or close the group; which groups are open is remembered in your browser. While you search or use a filter, groups open by themselves so nothing is hidden. A site with no sibling under its domain stays a normal row. Domains such as `example.co.uk` are recognised for the common two-part endings.
+
 ## Several servers, single sign-on, people limited to some sites, staging and undo
 
 **All servers** (sidebar, super admin). Add several servers (SSH only). The list shows each server's health side by side (sites, memory, disk, failed services). One server is *active*: the one every other page manages and the one uptime checks, backups and auto-heal follow. **Manage** switches to another (the uptime history and live metrics start afresh, because they describe one server). **Prepare** (adopt) installs the tools Shiplane needs plus Caddy on a fresh Ubuntu/Debian server and creates its deploy folders; it does not change SSH, the firewall or existing sites. Run Server care afterwards. Connections are stored in `fleet.json` (owner-only, passwords never shown again).

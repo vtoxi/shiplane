@@ -129,13 +129,29 @@ sudo systemctl enable coderunner >/dev/null 2>&1
 sudo systemctl restart coderunner
 echo "== web address"
 sudo mkdir -p /etc/caddy/sites
-sudo tee /etc/caddy/sites/coderunner.caddy >/dev/null <<SITE
+SITEF=/etc/caddy/sites/coderunner.caddy
+# >>> caddy-site
+BACKUP=$(mktemp); HAD=no; [ -f $SITEF ] && { sudo cp $SITEF $BACKUP; HAD=yes; }
+sudo tee $SITEF >/dev/null <<SITE
 __SITEHEAD__ {
 	encode gzip
 	reverse_proxy 127.0.0.1:8765
 }
 SITE
-sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || { echo "Caddy config invalid"; sudo rm -f /etc/caddy/sites/coderunner.caddy; exit 1; }
+if ! CHECK=$(sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1); then
+  echo "Caddy config invalid. Caddy says:"
+  echo "$CHECK" | tail -n 15 | sed 's/^/    /'
+  OTHER=$(sudo grep -lF -- "$DOMAIN" /etc/caddy/sites/*.caddy /etc/caddy/Caddyfile 2>/dev/null | grep -v "^$SITEF\$" || true)
+  if [ -n "$OTHER" ]; then
+    echo "Other Caddy files that also mention $DOMAIN (a site defined twice makes the config invalid; remove or edit the old one):"
+    echo "$OTHER" | sed 's/^/    /'
+  fi
+  if [ "$HAD" = yes ]; then sudo cp $BACKUP $SITEF; echo "the previous $SITEF was put back"; else sudo rm -f $SITEF; fi
+  rm -f $BACKUP
+  exit 1
+fi
+rm -f $BACKUP
+# <<< caddy-site
 sudo systemctl reload caddy
 for i in $(seq 1 20); do
   OUT=$(curl -s -m 3 -H "Host: $DOMAIN" http://127.0.0.1:8765/api/auth/me 2>/dev/null || true)
