@@ -21,7 +21,10 @@
 * `scripts/setup_github_deploy.py`: one command creates the deploy SSH key, installs it on the server, pins the host key and saves the repository's secrets and variables.
 * **GitHub Actions**: `deploy.yml` (deploys Shiplane to your server after the tests pass, pinned host key, optional approval) and the reusable `deploy-site.yml` (deploy a site from any repository with a deploy-only API key); `ci.yml` is callable.
 
+* Sites page: sites are grouped under their main domain in a collapsible row (subdomain count, health, memory); open state is remembered.
+
 ### Fixed
+* `install_on_server.py`: when Caddy rejects the new site, it now prints Caddy's own error, lists other Caddy files that define the same address, and puts the previous site file back (it used to hide the reason and delete the file).
 * `install_on_server.py`: re-running with a new `--domain` now also updates the allowed hostname (it was left on the old one, so the app refused the new address). New `--direct-https` serves `https://DOMAIN` from the server itself (Let's Encrypt); the default is plain http behind a Cloudflare tunnel.
 * `server_perf` test no longer races the server thread that releases its request slot.
 
