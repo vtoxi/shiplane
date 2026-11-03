@@ -9,6 +9,21 @@ Two workflows ship with this repository.
 
 `ci.yml` runs the unit tests and JavaScript checks on every push and pull request; `docker.yml` publishes the Docker image on a `v*` tag.
 
+## Quick start: let a script do the setup
+
+On your own computer (needs `ssh`, `ssh-keygen`, `ssh-keyscan`, `ssh-copy-id` and the [GitHub CLI](https://cli.github.com) signed in with `gh auth login`):
+
+```
+python scripts/setup_github_deploy.py --host server.example.com --user root \
+  --domain shiplane.example.com --admin-email you@example.com --run
+```
+
+It makes a key used only for deploying, installs its public half on the server (you type the server password once), shows the server's fingerprint for you to confirm, saves all the secrets and variables below in the repository (values go to `gh` on stdin, never on a command line), creates the `production` environment, deletes the private key from your computer, and with `--run` starts the first deploy.
+
+**Important:** `deploy.yml` runs on pushes to `main`, and "Run workflow" only appears once the file is on the default branch. Until the pull request is merged, the Actions tab shows only the tests.
+
+The sections below describe what the script sets, if you prefer to do it by hand.
+
 ## 1. Deploy Shiplane itself (`deploy.yml`)
 
 It runs `scripts/install_on_server.py`, which upgrades the code on the server and keeps its settings, accounts and data (a first run also installs Caddy, cloudflared and the service).

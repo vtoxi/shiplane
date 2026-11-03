@@ -18,6 +18,7 @@
 * **Care fixes**: preview of the exact commands, a record of applied fixes, and Undo.
 * Status page: choose which sites it shows.
 
+* `scripts/setup_github_deploy.py`: one command creates the deploy SSH key, installs it on the server, pins the host key and saves the repository's secrets and variables.
 * **GitHub Actions**: `deploy.yml` (deploys Shiplane to your server after the tests pass, pinned host key, optional approval) and the reusable `deploy-site.yml` (deploy a site from any repository with a deploy-only API key); `ci.yml` is callable.
 
 ### Fixed
