@@ -122,7 +122,10 @@ def test_vars_only_creates_environment_and_variables_with_placeholders():
     fake = Fake()
     with_tools(lambda: sg.main(['--vars-only', '--repo', 'vtoxi/shiplane', '--port', '22', '--domain', 'shiplane.example.com'], runner=fake, ask=lambda p: 'y'))
     sets = {c[0][3]: c[1]['input'] for c in fake.calls if c[0][:3] == ['gh', 'variable', 'set']}
-    assert sets == {'DEPLOY_DOMAIN': b'shiplane.example.com', 'ADMIN_EMAIL': b'CHANGE-ME', 'DEPLOY_PORT': b'22'}
+    assert sets == {'DEPLOY_DOMAIN': b'shiplane.example.com', 'ADMIN_EMAIL': sg.DEFAULT_ADMIN_EMAIL.encode(), 'DEPLOY_PORT': b'22'}
+    fake = Fake()
+    with_tools(lambda: sg.main(['--vars-only', '--repo', 'vtoxi/shiplane'], runner=fake))                                  # nothing given: the domain stays a placeholder, never the email
+    assert {c[0][3]: c[1]['input'] for c in fake.calls if c[0][:3] == ['gh', 'variable', 'set']}['DEPLOY_DOMAIN'] == b'CHANGE-ME'
     assert any(c[0][:2] == ['gh', 'api'] and c[0][-1].endswith('environments/production') for c in fake.calls)
     assert not any(c[0][0] in ('ssh', 'ssh-keygen', 'ssh-copy-id') for c in fake.calls) and not any(c[0][:3] == ['gh', 'secret', 'set'] for c in fake.calls)
     for bad in (['--domain', 'nodot'], ['--admin-email', 'nope'], ['--repo', 'bad']):
