@@ -23,6 +23,8 @@
 
 * Sites page: sites are grouped under their main domain in a collapsible row (subdomain count, health, memory); open state is remembered.
 
+* **Migrate: upload a backup from your computer** (Plesk/cPanel .zip, .tgz, .tar.gz, .tar): resumable pieces, progress, pause/cancel, free-space check, file-type check, then straight into the existing analysis.
+
 ### Fixed
 * `install_on_server.py`: when Caddy rejects the new site, it now prints Caddy's own error, lists other Caddy files that define the same address, and puts the previous site file back (it used to hide the reason and delete the file).
 * `install_on_server.py`: re-running with a new `--domain` now also updates the allowed hostname (it was left on the old one, so the app refused the new address). New `--direct-https` serves `https://DOMAIN` from the server itself (Let's Encrypt); the default is plain http behind a Cloudflare tunnel.

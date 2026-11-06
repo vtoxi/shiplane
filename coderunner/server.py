@@ -24,7 +24,7 @@ import traceback
 import time
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, activity, alerts, apikeys, appaddress, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, fleet, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
+from . import __version__, activity, backupupload, alerts, apikeys, appaddress, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, fleet, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
 from .runner import explain_ssh as runner_explain, popen, q, run, who
 
 # CODERUNNER_TOKEN pins the launch token (token mode); otherwise a fresh one per launch.
@@ -829,6 +829,45 @@ def api_migrate_active(qs, body):
     return {'run': r.brief() if r else None}
 
 
+# ----------------------------------------------- backup upload (cPanel / Plesk files, in pieces)
+@route('POST', '/api/migrate/upload/start', role='admin')
+def api_upload_start(qs, body):
+    """Begin uploading a backup file from the browser. Pieces go to POST /api/migrate/upload/chunk."""
+    out = backupupload.start(body.get('name'), body.get('size'))
+    audit('backup-upload-start', str(body.get('name', ''))[:80], '%s bytes' % body.get('size'))
+    return out
+
+
+@route('GET', '/api/migrate/upload/status', role='admin')
+def api_upload_status(qs, body):
+    return backupupload.status(qs.get('id', [''])[0])
+
+
+@route('POST', '/api/migrate/upload/complete', role='admin')
+def api_upload_complete(qs, body):
+    out = backupupload.complete(str(body.get('id', '')))
+    audit('backup-upload', out['name'], '%d bytes' % out['size'])
+    return out
+
+
+@route('POST', '/api/migrate/upload/abort', role='admin')
+def api_upload_abort(qs, body):
+    backupupload.abort(str(body.get('id', '')))
+    return {'ok': True}
+
+
+@route('GET', '/api/migrate/upload/list', role='admin')
+def api_upload_list(qs, body):
+    return backupupload.listing()
+
+
+@route('POST', '/api/migrate/upload/delete', role='admin')
+def api_upload_delete(qs, body):
+    backupupload.delete(body.get('file'))
+    audit('backup-delete', str(body.get('file', ''))[:80])
+    return {'ok': True}
+
+
 @route('GET', '/api/apps', role='admin')
 def api_apps(qs, body):
     """The app catalog and what is installed on the server."""
@@ -1479,6 +1518,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
         activity.log('login', user['email'], ctx.ip + ' (sso)', user['email'])
         return self.reply('', 302, 'text/plain', [('Location', '/')])
 
+    def upload_chunk(self, u, length):
+        """One raw piece of a backup upload. Only a full admin (not a limited, read-only or deploy-only caller) may send it."""
+        if not ctx.user:
+            return self.reply({'error': 'Sign in required', 'auth': STATE['auth']}, 401)
+        if auth.RANK[ctx.user['role']] < auth.RANK['admin'] or getattr(ctx, 'key_scope', '') in ('viewer', 'deploy') or (ctx.user.get('sites') is not None and ctx.user['role'] != 'super_admin'):
+            return self.reply({'error': 'Your account cannot upload backups'}, 403)
+        if self.blocked():
+            return self.reply({'error': MSG_2FA, 'need_2fa_setup': True}, 403)
+        if length > backupupload.CHUNK_MAX:
+            return self.reply({'error': 'piece too large'}, 413)
+        qs = parse_qs(u.query)
+        try:
+            out = backupupload.chunk(qs.get('id', [''])[0], qs.get('offset', [''])[0], self.rfile, length)
+        except backupupload.OffsetError as e:
+            return self.reply({'error': str(e), 'offset': e.offset}, 409)
+        except LookupError as e:
+            return self.reply({'error': str(e)}, 404)
+        except (ValueError, OSError) as e:
+            return self.reply({'error': str(e)}, 400)
+        return self.reply(out)
+
     def public_file(self, rel):
         full = os.path.join(config.WEB, 'pub', rel)
         with open(full, 'rb') as f:
@@ -1669,6 +1729,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.reply({'path': path})
             except ValueError as e:
                 return self.reply({'error': str(e)}, 400)
+        if u.path == '/api/migrate/upload/chunk':
+            return self.upload_chunk(u, length)
         if length > MAX_JSON:
             return self.reply({'error': 'request too large'}, 413)
         raw = self.rfile.read(length) or b''

@@ -608,6 +608,10 @@ Screens: **Firewall & email** in the sidebar (Network group) has tabs for the fi
 **MySQL / MariaDB backups.** Back up, nightly schedule, test restore and restore now cover MySQL / MariaDB too (files end in `.my.sql.gz`). A MySQL restore is proven on a scratch database first, then the real database is emptied and loaded; the safety backup taken just before is the way back if that second load fails.
 
 
+## Migrate: upload a Plesk or cPanel backup from your computer
+
+On [Migrate](#/migrate) choose **cPanel / Plesk backup file**, then **Upload from your computer** and pick the backup (`.zip`, `.tgz`, `.tar.gz` or `.tar`). The browser sends it to the server in 8 MB pieces: large files work, a dropped connection or a closed laptop continues where it stopped (choose the same file again), and you can **Pause** or **Cancel** (cancel removes the partial file). When the upload finishes the backup is analysed straight away and you continue as usual (choose what to move, then **Start migration**). Needs free disk space of about 1.5 times the file. Uploaded backups stay in the server's data folder, listed under **Backups already on the server** with **Use** and delete; they are removed automatically after 14 days. Only full admins can upload (not read-only, deploy-only or site-limited accounts).
+
 ## The Sites page: grouped by domain
 
 Sites that share a main domain are grouped under it: `shop.example.com`, `blog.example.com` and `example.com` appear under one **example.com** row with the number of subdomains, how many sites need attention, the number of sites, the main site if there is one, and the memory they use together. Click the row (or press Enter) to open or close the group; which groups are open is remembered in your browser. While you search or use a filter, groups open by themselves so nothing is hidden. A site with no sibling under its domain stays a normal row. Domains such as `example.co.uk` are recognised for the common two-part endings.

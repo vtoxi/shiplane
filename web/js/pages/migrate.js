@@ -1,6 +1,7 @@
 // Migrate: read an old hosting account (cPanel backup or a live server) and check the new server is ready for it.
-import { h, Button, Badge, Card, Table, EmptyState, Alert, PageHeader, Segmented, Field, Input, Stat, Console, Switch, busy, fill } from '../kit.js';
-import { bytes } from '../format.js';
+import { h, Button, Badge, Card, Table, EmptyState, Alert, PageHeader, Segmented, Field, Input, Stat, Console, Switch, Meter, busy, fill, confirmDialog, toast } from '../kit.js';
+import { bytes, duration, ago } from '../format.js';
+import { uploadBackup, cancelUpload, listUploads, deleteUpload } from '../uploader.js';
 import { api } from '../api.js';
 import { attempt, watchJob } from '../util.js';
 import { navigate } from '../router.js';
@@ -26,13 +27,72 @@ export function MigratePage() {
 
   const browse = Button({ label: 'Browse...', icon: 'folder', onClick: () => busy(browse, async () => { const r = await attempt(api('/api/pick-file', {})); if (r && r.path) path.value = r.path; }) });
 
+  // ---- upload a backup from this computer: in pieces, resumable, then analysed
+  const uploadBox = h('div', {});
+  const savedBox = h('div', {});
+  let up = null;                                  // { file, controller }
+  const fileInput = h('input', { type: 'file', accept: '.zip,.tgz,.tar,.gz,.tar.gz', class: 'block w-full text-sm', onChange: () => { if (fileInput.files[0]) startUpload(fileInput.files[0]); } });
+
+  function showProgress(p, note) {
+    fill(uploadBox, Meter({ value: p.sent, max: p.total }),
+      h('p', { class: 'mt-2 text-sm text-muted' }, `${bytes(p.sent)} of ${bytes(p.total)} (${Math.floor((p.sent / p.total) * 100)}%)${p.speed ? `, ${bytes(p.speed)}/s` : ''}${p.eta ? `, about ${duration(Math.ceil(p.eta))} left` : ''}${p.resumed ? ', continuing an earlier upload' : ''}${note ? '. ' + note : ''}`),
+      h('div', { class: 'mt-3 flex gap-2' },
+        Button({ label: 'Pause', size: 'sm', onClick: () => up && up.controller.abort() }),
+        Button({ label: 'Cancel upload', size: 'sm', variant: 'ghost', onClick: async () => { const f = up && up.file; if (up) up.controller.abort(); if (f) await cancelUpload(f); fill(uploadBox); fileInput.value = ''; toast('Upload cancelled and removed from the server', { tone: 'ok' }); } })));
+  }
+
+  async function startUpload(file) {
+    const controller = new AbortController();
+    up = { file, controller };
+    showProgress({ sent: 0, total: file.size }, 'Starting...');
+    try {
+      const done = await uploadBackup(file, { signal: controller.signal, onProgress: (p) => showProgress(p) });
+      up = null; fileInput.value = '';
+      fill(uploadBox, Alert({ tone: 'ok', title: 'Uploaded' }, `${done.name} (${bytes(done.size)}) is on the server. Analysing it now...`));
+      path.value = done.path;
+      loadSaved();
+      await analyze();
+    } catch (e) {
+      if (e.name === 'AbortError') {
+        fill(uploadBox, Alert({ tone: 'warn', title: 'Paused' }, 'The part already sent is kept on the server. Choose the same file again to continue where it stopped.'));
+      } else {
+        fill(uploadBox, Alert({ tone: 'bad', title: 'Upload stopped' }, e.message, h('p', { class: 'mt-2 text-xs' }, 'Choose the same file again to continue from where it stopped.')));
+      }
+      up = null;
+    }
+  }
+
+  async function loadSaved() {
+    try {
+      const l = await listUploads();
+      fill(savedBox, l.backups.length ? Card({ title: 'Backups already on the server', subtitle: 'Uploaded earlier. Removed automatically after 14 days.', bodyClass: '' }, Table({
+        columns: [
+          { label: 'File', render: (b) => h('span', { class: 'font-medium' }, b.name) },
+          { label: 'Size', class: 'text-muted', render: (b) => bytes(b.size) },
+          { label: 'Uploaded', class: 'text-muted', render: (b) => ago(b.time) },
+          { label: '', class: 'text-right', render: (b) => h('div', { class: 'flex justify-end gap-2' },
+            Button({ label: 'Use', size: 'sm', variant: 'primary', onClick: () => { path.value = b.path; analyze(); } }),
+            Button({ icon: 'trash', iconOnly: true, size: 'sm', variant: 'ghost', title: 'Delete this file from the server', onClick: async () => {
+              const c = await confirmDialog({ title: 'Delete this backup from the server?', message: b.name, confirmLabel: 'Delete' });
+              if (c.confirmed) { await attempt(deleteUpload(b.file), 'Deleted'); loadSaved(); }
+            } })) },
+        ],
+        rows: l.backups,
+      })) : null);
+    } catch (e) { fill(savedBox); }
+  }
+
   function drawForm() {
     const go = Button({ label: 'Analyze', icon: 'search', variant: 'primary', onClick: () => busy(go, () => analyze()) });
     form.replaceChildren(Card({ title: '1. Where are the old sites?' },
       h('div', { class: 'space-y-4' },
         Segmented({ label: 'Source', value: source, options: [{ value: 'backup', label: 'cPanel / Plesk backup file' }, { value: 'live', label: 'Live server (SSH)' }], onChange: (v) => { source = v; drawForm(); } }),
         source === 'backup'
-          ? Field({ label: 'Backup file on this computer', hint: 'A full cPanel account backup (cpmove-*.tar.gz) or a backup exported from Plesk (.tgz, .tar or .zip). Nothing is extracted; it is only read. Works without SSH.' }, h('div', { class: 'flex gap-2' }, h('div', { class: 'min-w-0 flex-1' }, path), browse))
+          ? h('div', { class: 'space-y-5' },
+            h('div', {}, h('p', { class: 'text-sm font-medium' }, 'Upload from your computer'),
+              h('p', { class: 'mb-2 text-xs text-muted' }, 'Choose a cPanel or Plesk backup (.zip, .tgz, .tar.gz or .tar). It is sent to the server in pieces, so large files work and a dropped connection continues where it stopped. The server needs free disk space of about 1.5 times the file.'),
+              fileInput, uploadBox), savedBox,
+            Field({ label: 'Or a backup file already on the server (a path)', hint: 'A full cPanel account backup (cpmove-*.tar.gz) or a backup exported from Plesk (.tgz, .tar or .zip). Nothing is extracted; it is only read. Works without SSH.' }, h('div', { class: 'flex gap-2' }, h('div', { class: 'min-w-0 flex-1' }, path), browse)))
           : h('div', { class: 'grid gap-4 sm:grid-cols-4' },
             Field({ label: 'Host' }, host), Field({ label: 'SSH port', hint: 'Often 22; shared hosts may use another.' }, port), Field({ label: 'User', hint: 'Needs root. A normal shared-hosting login cannot be read: use a backup file.' }, user),
             Field({ label: 'Login' }, Segmented({ label: 'Login', value: auth, options: [{ value: 'key', label: 'SSH key' }, { value: 'password', label: 'Password' }], onChange: (v) => { auth = v; drawForm(); } })),
@@ -140,6 +200,7 @@ export function MigratePage() {
   }
 
   drawForm();
+  loadSaved();
   return { el: h('div', { class: 'space-y-6 animate-fade-up' },
     PageHeader({ title: 'Migrate', description: 'Move sites and databases from shared hosting (cPanel, Plesk) or an older server to this server. This step only reads: nothing is changed on either side.' }), form, result) };
 }
