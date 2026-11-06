@@ -6,6 +6,7 @@ Two ways to get in:
 API keys (Authorization: Bearer crk_...) work in both modes. Every request must carry an allowed Host header;
 browser writes also need a custom header. Remote commands only ever run allowlisted scripts with validated arguments.
 """
+import base64
 import hmac
 import html
 import http.cookies
@@ -24,7 +25,7 @@ import traceback
 import time
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, activity, backupupload, files, alerts, apikeys, appaddress, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, fleet, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
+from . import __version__, activity, backupupload, files, terminal, alerts, apikeys, appaddress, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, fleet, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
 from .runner import explain_ssh as runner_explain, popen, q, run, who
 
 # CODERUNNER_TOKEN pins the launch token (token mode); otherwise a fresh one per launch.
@@ -916,6 +917,57 @@ def api_files_delete(qs, body):
     return out
 
 
+# --------------------------------------------------------------------- terminal
+def _term_owner():
+    return me()['email'] or who(cfg())
+
+
+@route('GET', '/api/terminal', role='super_admin')
+def api_terminal(qs, body):
+    browser_only()
+    return {'supported': terminal.SUPPORTED, 'enabled': terminal.enabled(), 'shells': terminal.SHELLS, 'sessions': terminal.mine(_term_owner()) if terminal.SUPPORTED else [],
+            'max': terminal.MAX_SESSIONS, 'idle_minutes': terminal.IDLE_SECONDS // 60}
+
+
+@route('POST', '/api/terminal/open', role='super_admin')
+def api_terminal_open(qs, body):
+    browser_only()
+    s = terminal.open_session(cfg(), _term_owner(), str(body.get('shell') or 'root'), body.get('rows') or 24, body.get('cols') or 80)
+    audit('terminal-open', s.shell, 'session %s' % s.id[:8])
+    return s.info()
+
+
+@route('POST', '/api/terminal/input', role='super_admin')
+def api_terminal_input(qs, body):
+    browser_only()
+    terminal.get(body.get('id'), _term_owner()).write(terminal.decode_input(body.get('data')))
+    return {'ok': True}
+
+
+@route('POST', '/api/terminal/resize', role='super_admin')
+def api_terminal_resize(qs, body):
+    browser_only()
+    terminal.get(body.get('id'), _term_owner()).resize(max(5, min(int(body.get('rows') or 24), 200)), max(20, min(int(body.get('cols') or 80), 500)))
+    return {'ok': True}
+
+
+@route('POST', '/api/terminal/close', role='super_admin')
+def api_terminal_close(qs, body):
+    browser_only()
+    s = terminal.get(body.get('id'), _term_owner())
+    s.close('closed by you')
+    audit('terminal-close', s.shell, 'session %s, %d minutes, %d bytes of output' % (s.id[:8], (time.time() - s.created) // 60, s.bytes_out))
+    return {'ok': True}
+
+
+@route('POST', '/api/terminal/settings', role='super_admin')
+def api_terminal_settings(qs, body):
+    browser_only()
+    on = terminal.set_enabled(bool(body.get('enabled')))
+    audit('terminal-settings', 'on' if on else 'off')
+    return {'enabled': on}
+
+
 @route('GET', '/api/apps', role='admin')
 def api_apps(qs, body):
     """The app catalog and what is installed on the server."""
@@ -1660,6 +1712,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except ValueError as e:
             self.reply({'error': str(e)}, 400)
 
+    def stream_terminal(self, qs):
+        """Server-Sent Events: the screen output of one terminal session, from byte offset `since`. Only its owner, a super admin signed in with a browser."""
+        if not ctx.user:
+            return self.reply({'error': 'Sign in required', 'auth': STATE['auth']}, 401)
+        if ctx.via_key or ctx.user['role'] != 'super_admin':
+            return self.reply({'error': 'The terminal is for super admins signed in with a browser'}, 403)
+        if self.blocked():
+            return self.reply({'error': MSG_2FA, 'need_2fa_setup': True}, 403)
+        try:
+            sess = terminal.get(qs.get('id', [''])[0], me()['email'] or who(cfg()))
+            since = max(0, int(qs.get('since', ['0'])[0] or 0))
+        except LookupError as e:
+            return self.reply({'error': str(e)}, 404)
+        except ValueError:
+            return self.reply({'error': 'Bad offset'}, 400)
+        if not perf.streams.acquire(timeout=0):
+            return self.reply({'error': 'Too many live streams are open. Close one and try again.'}, 429)
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/event-stream')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Accel-Buffering', 'no')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.end_headers()
+        try:
+            while True:
+                data, since, closed = sess.read(since, wait=15)
+                if data:
+                    self.wfile.write(b'data: ' + json.dumps({'d': base64.b64encode(data).decode(), 'n': since}).encode() + b'\n\n')
+                    self.wfile.flush()
+                elif not closed:
+                    self.wfile.write(b': ping\n\n')           # keeps the tunnel open and notices a closed browser
+                    self.wfile.flush()
+                if closed and not data:
+                    self.wfile.write(b'event: end\ndata: ' + json.dumps({'reason': sess.reason}).encode() + b'\n\n')
+                    break
+        except OSError:
+            pass                                                # the browser went away: the session itself stays for reattaching
+        finally:
+            perf.streams.release()
+
     def stream_logs(self, qs):
         """Server-Sent Events: follow a log until the browser goes away."""
         if self.blocked():
@@ -1741,6 +1833,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.sso_step(u.path, qs)
         if u.path in PUBLIC_FILES:       # the public status page and the install files for the app: no sign-in, and no data of their own
             return self.public_file(PUBLIC_FILES[u.path])
+        if u.path == '/api/terminal/stream':
+            return self.stream_terminal(qs)
         if u.path == '/api/logs/stream':
             if not ctx.user:
                 return self.reply({'error': 'Sign in required', 'auth': STATE['auth']}, 401)

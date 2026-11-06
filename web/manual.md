@@ -608,6 +608,12 @@ Screens: **Firewall & email** in the sidebar (Network group) has tabs for the fi
 **MySQL / MariaDB backups.** Back up, nightly schedule, test restore and restore now cover MySQL / MariaDB too (files end in `.my.sql.gz`). A MySQL restore is proven on a scratch database first, then the real database is emptied and loaded; the safety backup taken just before is the way back if that second load fails.
 
 
+## Terminal: a shell in the browser
+
+[Terminal](#/terminal) (super admins only) opens a real shell on the server, in the browser, with colours, `vim`, `top`, tab completion and Ctrl+C. Choose **Root shell** (`sudo -i`) or **The app's own account**, then **New terminal**. The session stays on the server when you leave the page or lose the connection: come back and it reattaches with the screen intact. It closes after 30 idle minutes (12 hours at most), or with **Close this terminal**. Up to 3 terminals at once. **A+ / A-** change the text size.
+
+It is a real root shell, so treat access to it like the root password. Only super admins signed in with a browser can use it (not API keys, not other super admins' sessions). What you type is never stored; the Activity log records only that a terminal was opened, by whom, as which shell, and for how long. **Switch the terminal off** (link under it) closes all terminals and blocks new ones until a super admin switches it on again; it can also be left off. The terminal needs the app to run on Linux or macOS (on Windows, use SSH from your own terminal).
+
 ## Files: browse and edit the server in the browser
 
 [Files](#/files) shows the server's folders. Click a folder to open it and a file to preview or edit it. **New file** and **New folder** create them; **Rename** and the bin icon change or delete them (a folder with files in it asks a second time and you type its name). Text files up to 2 MB open in an editor: **Ctrl+S** (Cmd+S on a Mac) saves, a badge shows unsaved changes, and you are warned before leaving with unsaved work. Saves are atomic (a temporary file replaces the old one, keeping its owner and permissions), and if the file changed on the server after you opened it you are asked before anything is overwritten. Images are previewed; other files can be downloaded (up to 25 MB).
