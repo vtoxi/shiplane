@@ -24,7 +24,7 @@ import traceback
 import time
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, activity, backupupload, alerts, apikeys, appaddress, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, fleet, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
+from . import __version__, activity, backupupload, files, alerts, apikeys, appaddress, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, fleet, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
 from .runner import explain_ssh as runner_explain, popen, q, run, who
 
 # CODERUNNER_TOKEN pins the launch token (token mode); otherwise a fresh one per launch.
@@ -866,6 +866,54 @@ def api_upload_delete(qs, body):
     backupupload.delete(body.get('file'))
     audit('backup-delete', str(body.get('file', ''))[:80])
     return {'ok': True}
+
+
+# ------------------------------------------------------------------------ files
+def _file_role():
+    return me()['role'] if me()['role'] in ('admin', 'super_admin') else 'admin'
+
+
+@route('GET', '/api/files/list', role='admin')
+def api_files_list(qs, body):
+    """Folders and files at a path on the server (admins: web and home folders; super admins: also /etc, /opt, /root, logs)."""
+    return files.list_dir(cfg(), _file_role(), qs.get('path', ['/'])[0])
+
+
+@route('GET', '/api/files/read', role='admin')
+def api_files_read(qs, body):
+    """One file to preview or edit: text (up to 2 MB) or a small image, with its modified time for conflict detection. ?download=1 allows up to 25 MB of any file."""
+    return files.read(cfg(), _file_role(), qs.get('path', [''])[0], download=qs.get('download', [''])[0] == '1')
+
+
+@route('POST', '/api/files/write', role='admin')
+def api_files_write(qs, body):
+    out = files.write(cfg(), _file_role(), body.get('path'), body.get('content'), body.get('expect_mtime'), bool(body.get('create')), bool(body.get('force')))
+    if not out.get('conflict'):
+        audit('file-write' if not body.get('create') else 'file-create', str(body.get('path', ''))[:200])
+    return out
+
+
+@route('POST', '/api/files/mkdir', role='admin')
+def api_files_mkdir(qs, body):
+    out = files.mkdir(cfg(), _file_role(), body.get('path'))
+    audit('folder-create', str(body.get('path', ''))[:200])
+    return out
+
+
+@route('POST', '/api/files/rename', role='admin')
+def api_files_rename(qs, body):
+    out = files.rename(cfg(), _file_role(), body.get('path'), body.get('name')) if body.get('name') is not None else files.move(cfg(), _file_role(), body.get('path'), body.get('new_path'))
+    audit('file-rename', str(body.get('path', ''))[:200], str(body.get('name') or body.get('new_path') or '')[:200])
+    return out
+
+
+@route('POST', '/api/files/delete', role='admin')
+def api_files_delete(qs, body):
+    if not body.get('confirm'):
+        raise ValueError('Confirm the deletion first')
+    out = files.delete(cfg(), _file_role(), body.get('path'), bool(body.get('recursive')))
+    audit('file-delete', str(body.get('path', ''))[:200], 'folder and everything in it' if body.get('recursive') else '')
+    return out
 
 
 @route('GET', '/api/apps', role='admin')

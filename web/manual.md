@@ -608,6 +608,12 @@ Screens: **Firewall & email** in the sidebar (Network group) has tabs for the fi
 **MySQL / MariaDB backups.** Back up, nightly schedule, test restore and restore now cover MySQL / MariaDB too (files end in `.my.sql.gz`). A MySQL restore is proven on a scratch database first, then the real database is emptied and loaded; the safety backup taken just before is the way back if that second load fails.
 
 
+## Files: browse and edit the server in the browser
+
+[Files](#/files) shows the server's folders. Click a folder to open it and a file to preview or edit it. **New file** and **New folder** create them; **Rename** and the bin icon change or delete them (a folder with files in it asks a second time and you type its name). Text files up to 2 MB open in an editor: **Ctrl+S** (Cmd+S on a Mac) saves, a badge shows unsaved changes, and you are warned before leaving with unsaved work. Saves are atomic (a temporary file replaces the old one, keeping its owner and permissions), and if the file changed on the server after you opened it you are asked before anything is overwritten. Images are previewed; other files can be downloaded (up to 25 MB).
+
+Admins reach `/var/www`, `/srv` and `/home`. Super admins also reach `/etc`, `/opt`, `/root`, and (read-only) `/var/log` and `/var/backups`. Symbolic links are followed only when they stay inside those folders. Files that hold secrets (shadow and sudoers files, SSH host keys and private keys, this app's own data and settings) are never shown or changed. Every create, save, rename and delete is in the Activity log (the path only, never the contents). People limited to some sites cannot use Files.
+
 ## Migrate: upload a Plesk or cPanel backup from your computer
 
 On [Migrate](#/migrate) choose **cPanel / Plesk backup file**, then **Upload from your computer** and pick the backup (`.zip`, `.tgz`, `.tar.gz` or `.tar`). The browser sends it to the server in 8 MB pieces: large files work, a dropped connection or a closed laptop continues where it stopped (choose the same file again), and you can **Pause** or **Cancel** (cancel removes the partial file). When the upload finishes the backup is analysed straight away and you continue as usual (choose what to move, then **Start migration**). Needs free disk space of about 1.5 times the file. Uploaded backups stay in the server's data folder, listed under **Backups already on the server** with **Use** and delete; they are removed automatically after 14 days. Only full admins can upload (not read-only, deploy-only or site-limited accounts).
