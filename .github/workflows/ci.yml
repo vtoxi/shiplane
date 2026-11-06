@@ -22,3 +22,32 @@ jobs:
       - run: pip install coverage
       - run: python tests/run_unit_tests.py
       - run: node tests/check_js.mjs
+
+  # The mail server tested against the REAL Postfix, Dovecot and Rspamd (it rewrites their configuration, so only on this throwaway runner).
+  mail:
+    runs-on: ubuntu-latest
+    continue-on-error: true          # informative until it has proven stable on GitHub's runners
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the mail software
+        run: |
+          echo "postfix postfix/main_mailer_type select Internet Site" | sudo debconf-set-selections
+          echo "postfix postfix/mailname string mail.test.example" | sudo debconf-set-selections
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q postfix dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd dovecot-sieve rspamd openssl
+          sudo systemctl stop postfix dovecot rspamd || true
+          getent group vmail >/dev/null || sudo groupadd -g 5000 vmail
+          id vmail >/dev/null 2>&1 || sudo useradd -u 5000 -g 5000 -d /var/vmail -s /usr/sbin/nologin vmail
+          sudo install -d -m 0700 -o vmail -g vmail /var/vmail
+          sudo install -d -m 0755 /etc/postfix/shiplane /etc/dovecot/shiplane
+          sudo install -d -m 0700 /etc/shiplane-mail
+          getent group ssl-cert >/dev/null || sudo groupadd -r ssl-cert
+          sudo usermod -aG ssl-cert postfix
+          sudo install -d -m 0750 -o root -g ssl-cert /etc/shiplane-mail/tls
+          sudo openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=mail.test.example" -keyout /etc/shiplane-mail/tls/privkey.pem -out /etc/shiplane-mail/tls/fullchain.pem
+          sudo chgrp ssl-cert /etc/shiplane-mail/tls/*.pem; sudo chmod 0640 /etc/shiplane-mail/tls/privkey.pem; sudo chmod 0644 /etc/shiplane-mail/tls/fullchain.pem
+      - name: Run the mail integration test
+        run: sudo env SHIPLANE_MAIL_INTEGRATION=1 python3 tests/test_mail_integration.py

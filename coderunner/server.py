@@ -25,7 +25,7 @@ import traceback
 import time
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, activity, backupupload, files, terminal, alerts, apikeys, appaddress, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, fleet, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
+from . import __version__, activity, backupupload, files, mail, terminal, alerts, apikeys, appaddress, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, fleet, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
 from .runner import explain_ssh as runner_explain, popen, q, run, who
 
 # CODERUNNER_TOKEN pins the launch token (token mode); otherwise a fresh one per launch.
@@ -966,6 +966,141 @@ def api_terminal_settings(qs, body):
     on = terminal.set_enabled(bool(body.get('enabled')))
     audit('terminal-settings', 'on' if on else 'off')
     return {'enabled': on}
+
+
+# ------------------------------------------------------------------------- mail
+@route('GET', '/api/mail', role='admin')
+def api_mail(qs, body):
+    """The mail server's state: what is installed and listening, and (when set up) its domains, mailboxes and aliases."""
+    st = mail.status(cfg())
+    return {'status': st, 'view': mail.view(cfg()) if st['configured'] else None, 'ports': list(mail.PORTS)}
+
+
+@route('POST', '/api/mail/install', role='super_admin')
+def api_mail_install(qs, body):
+    """Install Postfix, Dovecot and Rspamd and configure them (a background job, several minutes). Progress: GET /api/job."""
+    browser_only()
+    job = mail.install(cfg(), body.get('hostname'), body.get('options') or {})
+    audit('mail-install', str(body.get('hostname', ''))[:80])
+    return {'job': job}
+
+
+@route('POST', '/api/mail/domain/add', role='super_admin')
+def api_mail_domain_add(qs, body):
+    out = mail.add_domain(cfg(), body.get('domain'), body.get('selector') or 'mail')
+    audit('mail-domain-add', out['domain'])
+    return out
+
+
+@route('POST', '/api/mail/domain/remove', role='super_admin')
+def api_mail_domain_remove(qs, body):
+    out = mail.remove_domain(cfg(), body.get('domain'), body.get('confirm'))
+    audit('mail-domain-remove', str(body.get('domain', ''))[:80])
+    return out
+
+
+@route('GET', '/api/mail/dns', role='admin')
+def api_mail_dns(qs, body):
+    """The DNS records a mail domain needs (MX, SPF, DKIM, DMARC), for the Domains page of your DNS provider. Changes nothing."""
+    domain = qs.get('domain', [''])[0].strip().lower()
+    v = mail.view(cfg())
+    d = next((x for x in v['domains'] if x['name'] == domain), None)
+    if not d:
+        raise LookupError('That domain is not set up for mail')
+    try:
+        ip = dnsproviders.detect_ip(cfg())
+    except Exception:
+        ip = ''
+    return {'domain': domain, 'hostname': v['hostname'], 'ip': ip, 'records': mail.dns_records(domain, v['hostname'], ip, d['selector'], d['dkim_public'])}
+
+
+@route('GET', '/api/mail/check', role='admin')
+def api_mail_check(qs, body):
+    """Look the domain's real DNS up: MX, SPF, DKIM, DMARC, with a fix for each finding."""
+    domain = qs.get('domain', [''])[0].strip().lower()
+    v = mail.view(cfg())
+    d = next((x for x in v['domains'] if x['name'] == domain), None)
+    return mail.check_dns(domain, d['selector'] if d else '')
+
+
+@route('POST', '/api/mail/account/add', role='admin')
+def api_mail_account_add(qs, body):
+    out = mail.add_account(cfg(), body.get('email'), body.get('password'), body.get('quota_mb', 1024), body.get('name', ''))
+    audit('mail-account-add', out['email'])
+    return out
+
+
+@route('POST', '/api/mail/account/update', role='admin')
+def api_mail_account_update(qs, body):
+    op = str(body.get('op', ''))
+    extra = {k: body[k] for k in ('password', 'quota_mb', 'autoreply', 'delete_mail') if k in body}
+    if op == 'delete' and body.get('confirm') != body.get('email'):
+        raise ValueError('Type the mailbox address to confirm')
+    out = mail.account_op(cfg(), body.get('email'), op, **extra)
+    audit('mail-account-' + op, str(body.get('email', ''))[:120], 'with its mail' if body.get('delete_mail') else '')
+    return out
+
+
+@route('POST', '/api/mail/alias/add', role='admin')
+def api_mail_alias_add(qs, body):
+    out = mail.add_alias(cfg(), body.get('source'), body.get('dests'))
+    audit('mail-alias-add', out['source'])
+    return out
+
+
+@route('POST', '/api/mail/alias/remove', role='admin')
+def api_mail_alias_remove(qs, body):
+    out = mail.remove_alias(cfg(), body.get('source'))
+    audit('mail-alias-remove', str(body.get('source', ''))[:120])
+    return out
+
+
+@route('POST', '/api/mail/relay', role='super_admin')
+def api_mail_relay(qs, body):
+    browser_only()
+    out = mail.set_relay(cfg(), body.get('relay') or {})
+    audit('mail-relay', (body.get('relay') or {}).get('host', 'off'))
+    return out
+
+
+@route('POST', '/api/mail/options', role='super_admin')
+def api_mail_options(qs, body):
+    out = mail.set_options(cfg(), body.get('options') or {})
+    audit('mail-options', json.dumps(body.get('options') or {})[:200])
+    return out
+
+
+@route('GET', '/api/mail/queue', role='super_admin')
+def api_mail_queue(qs, body):
+    return mail.queue(cfg(), 'list')
+
+
+@route('POST', '/api/mail/queue', role='super_admin')
+def api_mail_queue_op(qs, body):
+    out = mail.queue(cfg(), str(body.get('op', '')), body.get('id'))
+    audit('mail-queue-' + str(body.get('op', '')), str(body.get('id', ''))[:20])
+    return out
+
+
+@route('GET', '/api/mail/logs', role='super_admin')
+def api_mail_logs(qs, body):
+    return mail.logs(cfg(), qs.get('lines', ['200'])[0])
+
+
+@route('POST', '/api/mail/port25', role='super_admin')
+def api_mail_port25(qs, body):
+    """Can this server reach other mail servers on port 25? Many hosts block it until you ask."""
+    return mail.port25(cfg())
+
+
+@route('POST', '/api/mail/ports', role='super_admin')
+def api_mail_ports(qs, body):
+    """Open the mail ports in the firewall (only with the typed word, and only if the firewall is on)."""
+    browser_only()
+    out = mail.open_ports(cfg(), bool(body.get('preview')), body.get('confirm'))
+    if not body.get('preview'):
+        audit('mail-open-ports', ', '.join(str(p) for p in mail.PORTS))
+    return out
 
 
 @route('GET', '/api/apps', role='admin')

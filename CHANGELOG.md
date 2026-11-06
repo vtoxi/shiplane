@@ -29,6 +29,8 @@
 
 * **Terminal** page: a real root or app-account shell in the browser (xterm.js, pseudo-terminal), reattachable, idle timeout, super admins only, switch-off, audited open/close (never keystrokes).
 
+* **Mail** page: a free mail server (Postfix, Dovecot, Rspamd) with domains, mailboxes, aliases/forwarders/catch-all, autoresponders, DKIM, spam filter (to Junk), relay option, DNS records and check, queue and logs. Tested against the real software (`tests/test_mail_integration.py`).
+
 ### Fixed
 * `install_on_server.py`: when Caddy rejects the new site, it now prints Caddy's own error, lists other Caddy files that define the same address, and puts the previous site file back (it used to hide the reason and delete the file).
 * `install_on_server.py`: re-running with a new `--domain` now also updates the allowed hostname (it was left on the old one, so the app refused the new address). New `--direct-https` serves `https://DOMAIN` from the server itself (Let's Encrypt); the default is plain http behind a Cloudflare tunnel.

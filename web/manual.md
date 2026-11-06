@@ -608,6 +608,30 @@ Screens: **Firewall & email** in the sidebar (Network group) has tabs for the fi
 **MySQL / MariaDB backups.** Back up, nightly schedule, test restore and restore now cover MySQL / MariaDB too (files end in `.my.sql.gz`). A MySQL restore is proven on a scratch database first, then the real database is emptied and loaded; the safety backup taken just before is the way back if that second load fails.
 
 
+## Mail: a free mail server, like cPanel or Plesk
+
+[Mail](#/mail) turns this server into a mail server (Postfix for sending and receiving, Dovecot for mailboxes with IMAP and POP3, Rspamd for spam filtering and DKIM signing). Mailboxes, aliases, forwarders, catch-all, autoresponders and spam settings are all managed on the page; there is no extra software to configure by hand.
+
+**Set up (super admin).** On a fresh Mail page enter the **mail server name** (for example `mail.example.com`) and press **Install**. It takes a few minutes. Before or right after:
+* add a DNS **A record** for the mail server name pointing at this server (then the app gets a real Let's Encrypt certificate through Caddy by itself; until then mail apps warn about a temporary one);
+* set the **reverse DNS (PTR)** of the server's IP to the mail server name, in your hosting provider's panel (mail from an IP without it is often refused);
+* check **outgoing port 25** with **Test sending**. Hetzner, AWS, Google Cloud and Azure block it on new accounts until you ask. If it is blocked, use a **relay** (Spam & sending tab: Brevo, Mailgun, Amazon SES, SendGrid or any SMTP service); receiving is not affected;
+* press **Open the mail ports in the firewall** if the firewall is on (ports 25, 465, 587, 993, 995; type `mail` to confirm).
+
+**Domains.** Add each domain you want mail for (**Domains** tab). A DKIM signing key is made for it, and **DNS records** shows exactly what to add at the domain's DNS: MX, SPF, DKIM, DMARC and an optional autoconfig CNAME, each with copy buttons. **Check DNS** looks the real DNS up and says what is missing. Removing a domain needs its mailboxes deleted first.
+
+**Mailboxes.** Create (a strong password is suggested; copy it before saving), change the password or space (0 = unlimited), turn an **auto-reply** on or off (it answers each sender once per N days while mail is still delivered), **disable** (the mailbox refuses mail and logins but keeps its mail) or delete (optionally with all its mail).
+
+**Aliases & forwarders.** `info@example.com` delivering to one or more addresses (outside addresses too), and `@example.com` as a **catch-all** for everything not matched by a mailbox or another alias. A real mailbox is never swallowed by a catch-all, and a disabled one is refused instead.
+
+**Spam & sending.** Spam level: off, relaxed, standard or strict. Suspected spam goes to each mailbox's **Junk** folder and the worst is refused during delivery. Largest message size. Optional relay for outgoing mail.
+
+**Queue & logs.** Messages waiting to leave (with the reason, retry all, delete one) and the mail log.
+
+**Mail apps.** Username is the full address. Incoming IMAP `mail.example.com` port 993 (SSL/TLS) or POP3 port 995; outgoing SMTP port 587 (STARTTLS) or 465 (SSL/TLS). Settings are repeated on the Overview tab.
+
+**How it is protected.** Only authenticated users on ports 587/465 can send, over TLS only (TLS 1.2+); a user can send only as their own address or an alias that points at them (no spoofing); the server relays for no one else (it trusts only itself, not the surrounding network); passwords are stored as salted SHA-512 hashes; outgoing mail is DKIM-signed. Admins can manage mailboxes and aliases; domains, the relay, spam level, firewall ports, the queue and install are for super admins. Not included: antivirus scanning (ClamAV needs a lot of memory), mailing lists, and webmail (use any mail app; Roundcube can be added as a PHP site later).
+
 ## Terminal: a shell in the browser
 
 [Terminal](#/terminal) (super admins only) opens a real shell on the server, in the browser, with colours, `vim`, `top`, tab completion and Ctrl+C. Choose **Root shell** (`sudo -i`) or **The app's own account**, then **New terminal**. The session stays on the server when you leave the page or lose the connection: come back and it reattaches with the screen intact. It closes after 30 idle minutes (12 hours at most), or with **Close this terminal**. Up to 3 terminals at once. **A+ / A-** change the text size.
