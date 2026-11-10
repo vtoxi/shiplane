@@ -356,8 +356,10 @@ def site_action(cfg, a):
     if act == 'delete':
         if a.get('confirm') != name:
             raise ValueError('type the site name to confirm deletion')
-        rc, out = run(cfg, 'bash -s', inp=script('delete.sh').replace('__NAME__', name).replace('__DROPDB__', 'true' if a.get('dropDb') else 'false').encode(), timeout=120)
+        rc, out = run(cfg, 'bash -s', inp=script('delete.sh').replace('__NAME__', name).replace('__DROPDB__', 'true' if a.get('dropDb') else 'false').replace('__PURGE__', 'true' if a.get('purge') else 'false').encode(), timeout=120)
         text = out.strip()
+        if rc == 0 and a.get('purge'):
+            text += '\n' + _purge_records(cfg, name)
         if rc == 0 and a.get('unmapCf') and config.cloudflare_ready():
             try:
                 text += '\n' + '\n'.join(cloudflare.unmap_hosts(config.clean_hosts(a.get('hosts'))))
@@ -365,6 +367,31 @@ def site_action(cfg, a):
                 text += '\nCloudflare cleanup FAILED: %s' % e
         return rc, text
     raise ValueError('unknown action')
+
+
+def _purge_records(cfg, name):
+    """What the delete script cannot reach: this app's own records of the site (Git connection) and the backups of its database."""
+    notes = []
+    try:
+        from . import gitdeploy, dbops, settings
+        store = settings.get('git')
+        if name in store:
+            with gitdeploy._lock:
+                store = gitdeploy._store()
+                store.pop(name, None)
+                settings.put('git', store)
+            gitdeploy.PENDING.pop(name, None)
+            notes.append('Git connection removed')
+        db = 'app_' + name.replace('-', '_')
+        gone = 0
+        for b in dbops.list_all(cfg)['backups']:
+            if b['file'].rsplit('-', 2)[0] == db:
+                dbops.delete_backup(cfg, b['file'])
+                gone += 1
+        notes.append('%d database backup(s) removed' % gone)
+    except Exception as e:
+        notes.append('Cleanup of the app\'s own records FAILED: %s' % e)
+    return 'Everything about %s was removed. ' % name + '; '.join(notes)
 
 
 def promote(cfg, a):

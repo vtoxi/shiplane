@@ -255,15 +255,15 @@ export function SitePage({ params, query }) {
       s.has_service && s.type !== 'docker' ? runCard(s) : null,
       Card({ title: 'Redeploy', subtitle: 'Upload a new build. The previous release is kept for rollback.' }, Button({ label: 'Redeploy this site', icon: 'rocket', variant: 'primary', href: `#/deploy?site=${s.name}` })),
       h('section', { class: 'card border-bad/40' },
-        h('div', { class: 'card-header' }, h('div', {}, h('h2', { class: 'text-sm text-bad' }, 'Danger zone'), h('p', { class: 'mt-0.5 text-xs text-muted' }, 'Deleting removes the site, its files and its service from the server.'))),
+        h('div', { class: 'card-header' }, h('div', {}, h('h2', { class: 'text-sm text-bad' }, 'Danger zone'), h('p', { class: 'mt-0.5 text-xs text-muted' }, 'Deleting removes the site, its files and its service. "Delete everything" also removes its database, backups, Git connection and scheduled tasks.'))),
         h('div', { class: 'card-body' }, Button({ label: 'Delete this site', icon: 'trash', variant: 'danger-soft', onClick: async () => {
-          const sw = [];
+          const sw = [{ id: 'purge', label: 'Delete everything about this site', description: 'Also deletes its database (Postgres and MySQL), the backups of that database, its Git connection and deploy key, and its scheduled tasks. This cannot be undone.', default: true }];
           if (s.db) sw.push({ id: 'dropDb', label: 'Also delete its Postgres database and data', description: 'This cannot be undone.', default: false });
           if (store.session && store.session.cloudflare && hosts.length) sw.push({ id: 'unmapCf', label: 'Also remove its Cloudflare route and DNS record', description: hosts.join(', '), default: true });
           if (store.session && (store.session.dnsProviders || []).length && hosts.length) sw.push({ id: 'unmapDns', label: 'Also remove its A records (Route 53 / DigitalOcean)', description: 'Only records that point at this server.', default: true });
           const c = await confirmDialog({ title: `Delete ${s.name}?`, message: 'The site stops being served and its files are removed from the server.', confirmLabel: 'Delete site', requireText: s.name, switches: sw });
           if (!c.confirmed) return;
-          const r = await attempt(api('/api/action', { name: s.name, action: 'delete', confirm: s.name, dropDb: !!c.values.dropDb, unmapCf: !!c.values.unmapCf, unmapDns: !!c.values.unmapDns, hosts }), (x) => x.text);
+          const r = await attempt(api('/api/action', { name: s.name, action: 'delete', confirm: s.name, dropDb: !!c.values.dropDb || !!c.values.purge, purge: !!c.values.purge, unmapCf: !!c.values.unmapCf, unmapDns: !!c.values.unmapDns, hosts }), (x) => x.text);
           if (r) { await refresh({ quiet: true }); navigate('/sites'); }
         } }))));
   }

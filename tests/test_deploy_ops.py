@@ -184,6 +184,24 @@ def test_site_actions():
     assert rel[0] in fake.calls[-1]['inp'].decode()
 
 
+def test_delete_purge_removes_everything_about_the_site():
+    reset()
+    fake = use(('delete', 0, 'deleted demo\n'))
+    from coderunner import gitdeploy, dbops, settings
+    gone, saved = [], {}
+    old = (settings.get, settings.put, dbops.list_all, dbops.delete_backup)
+    settings.get = lambda k: {'demo': {'repo': 'x'}, 'other': {'repo': 'y'}}
+    settings.put = lambda k, v: saved.update({k: v})
+    dbops.list_all = lambda cfg: {'backups': [{'file': 'app_demo-20240101-0300.sql.gz'}, {'file': 'app_demo2-20240101-0300.sql.gz'}]}
+    dbops.delete_backup = lambda cfg, f: gone.append(f)
+    try:
+        rc, text = deploy.site_action(CFG, {'name': 'demo', 'action': 'delete', 'confirm': 'demo', 'purge': True})
+    finally:
+        settings.get, settings.put, dbops.list_all, dbops.delete_backup = old
+    assert rc == 0 and 'Everything about demo was removed' in text and 'PURGE=true' in fake.calls[-1]['inp'].decode()
+    assert gone == ['app_demo-20240101-0300.sql.gz'] and set(saved['git']) == {'other'}
+
+
 def test_delete_needs_confirmation_and_cleans_up_cloudflare():
     reset()
     fake = use(('delete', 0, 'deleted demo\n'))
