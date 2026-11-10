@@ -106,6 +106,36 @@ def test_write_create_update_conflict_and_atomicity():
     raises(lambda: files.write(CFG, 'admin', p, b'bytes'), 'must be text')
 
 
+def test_unsafe_folders_are_protected_and_marked():
+    srv, meta, home = (os.path.join(TREE, n) for n in ('srv', 'meta', 'homes'))
+    for d in (srv, meta, home, os.path.join(srv, 'live', 'releases'), os.path.join(srv, 'live', 'current'), os.path.join(srv, 'spare', 'x'), os.path.join(ETC, 'caddy'), os.path.join(WEB, 'busy')):
+        os.makedirs(d, exist_ok=True)
+    open(os.path.join(meta, 'live.json'), 'w').write('{}')
+    files.ADMIN_ROOTS, files.SUPER_ROOTS = (WEB, srv, home), (WEB, srv, home, ETC, LOGS)
+    files.GUARDS = {'srv': srv, 'home': home, 'etc': ETC, 'meta': meta}
+    try:
+        raises(lambda: files.delete(CFG, 'super_admin', os.path.join(srv, 'live'), recursive=True), 'live site "live"')
+        raises(lambda: files.rename(CFG, 'super_admin', os.path.join(srv, 'live'), 'moved'), 'live site "live"')
+        raises(lambda: files.delete(CFG, 'super_admin', os.path.join(srv, 'live', 'current'), recursive=True), 'Part of the live site')
+        raises(lambda: files.rename(CFG, 'super_admin', os.path.join(srv, 'live', 'releases'), 'r2'), 'Part of the live site')
+        raises(lambda: files.delete(CFG, 'super_admin', os.path.join(ETC, 'caddy'), recursive=True), 'system settings')
+        listing = files.list_dir(CFG, 'super_admin', srv)
+        marks = {e['name']: e.get('lock') for e in listing['entries']}
+        assert marks['live'] and not marks['spare'], marks
+        files.rename(CFG, 'super_admin', os.path.join(srv, 'spare'), 'spare2')                   # a folder nothing uses is still free to rename and delete
+        files.delete(CFG, 'super_admin', os.path.join(srv, 'spare2'), recursive=True)
+        busy = os.path.join(WEB, 'busy')
+        p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], cwd=busy)
+        try:
+            raises(lambda: files.delete(CFG, 'admin', busy, recursive=True), 'running program')
+        finally:
+            p.kill()
+            p.wait()
+        files.delete(CFG, 'admin', busy, recursive=True)
+    finally:
+        files.GUARDS = {}
+
+
 def test_mkdir_rename_move_and_delete():
     base = os.path.join(WEB, 'm')
     os.makedirs(base)

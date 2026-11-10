@@ -694,6 +694,12 @@ It is a real root shell, so treat access to it like the root password. Only supe
 
 Admins reach `/var/www`, `/srv` and `/home`. Super admins also reach `/etc`, `/opt`, `/root`, and (read-only) `/var/log` and `/var/backups`. Symbolic links are followed only when they stay inside those folders. Files that hold secrets (shadow and sudoers files, SSH host keys and private keys, this app's own data and settings) are never shown or changed. Every create, save, rename and delete is in the Activity log (the path only, never the contents). People limited to some sites cannot use Files.
 
+**Protected folders.** A folder that is not safe to delete or rename shows a lock and "Protected" instead of the buttons (hover for the reason): the folder of a live site (delete the site from the Sites page instead), a live site's `current` and `releases`, an account's home folder, the folders directly inside `/etc`, and any folder a running program is working in. The server checks this again on every request, so it cannot be bypassed.
+
+## Cleaning temporary storage every day
+
+`scripts/shiplane-tmp-cleanup.sh` removes files in `/tmp` and `/var/tmp` that nobody has read or changed for 3 days (and the empty folders left behind). It skips sockets, systemd, tmux and SSH-agent folders and anything a running program has open. Copy it to the server and run `sudo ./shiplane-tmp-cleanup.sh --install` to run it every day at 03:30; `--dry-run` lists what would go, `DAYS=7` is gentler, `--uninstall` removes it. Each run adds a line to `/var/log/shiplane-tmp-cleanup.log`.
+
 ## Migrate: upload a Plesk or cPanel backup from your computer
 
 On [Migrate](#/migrate) choose **cPanel / Plesk backup file**, then **Upload from your computer** and pick the backup (`.zip`, `.tgz`, `.tar.gz` or `.tar`). The browser sends it to the server in 8 MB pieces: large files work, a dropped connection or a closed laptop continues where it stopped (choose the same file again), and you can **Pause** or **Cancel** (cancel removes the partial file). When the upload finishes the backup is analysed straight away and you continue as usual (choose what to move, then **Start migration**). Needs free disk space of about 1.5 times the file. Uploaded backups stay in the server's data folder, listed under **Backups already on the server** with **Use** and delete; they are removed automatically after 14 days. Only full admins can upload (not read-only, deploy-only or site-limited accounts).
