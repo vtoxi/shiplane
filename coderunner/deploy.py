@@ -181,7 +181,8 @@ def deploy_script(app, user):
     head = 'http://%s, https://%s' % (app['hostname'], app['hostname']) if app.get('direct') else 'http://%s' % app['hostname']
     site = '%s {\n%s\n}' % (head, body)
     for r in app['redirectFrom']:
-        site += '\n\nhttp://%s {\n\tredir https://%s{uri} permanent\n}' % (r, app['hostname'])
+        # a direct-HTTPS site must answer https:// on the redirected names too (and so get a certificate for them), or https://www.example.com is a browser error
+        site += '\n\n%s {\n\tredir https://%s{uri} permanent\n}' % ('http://%s, https://%s' % (r, r) if app.get('direct') else 'http://%s' % r, app['hostname'])
     meta = {k: app[k] for k in ('name', 'hostname', 'type', 'port', 'dll', 'start', 'postgresDb', 'redirectFrom')}
     if t == 'command':
         meta['build'] = app['build']

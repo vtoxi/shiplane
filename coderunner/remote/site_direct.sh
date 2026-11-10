@@ -4,9 +4,9 @@ F=/etc/caddy/sites/$NAME.caddy; M=/etc/deploy-meta/$NAME.json
 [ -f "$F" ] || { echo "there is no site called $NAME"; exit 1; }
 sudo cp -a "$F" "$F.bak"
 if [ "$MODE" = on ]; then
-  sudo sed -i -E '1s#^http://([^ ,{]+) \{$#http://\1, https://\1 {#' "$F"
+  sudo sed -i -E 's#^http://([^ ,{]+) \{$#http://\1, https://\1 {#' "$F"          # every block of the site: its address and its redirects (www ...)
 else
-  sudo sed -i -E '1s#^http://([^ ,{]+), https://[^ ,{]+ \{$#http://\1 {#' "$F"
+  sudo sed -i -E 's#^http://([^ ,{]+), https://[^ ,{]+ \{$#http://\1 {#' "$F"
 fi
 [ -x /usr/local/sbin/shiplane-wildcard-attach ] && sudo /usr/local/sbin/shiplane-wildcard-attach || true   # use a wildcard certificate when one covers this site
 if ! sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then

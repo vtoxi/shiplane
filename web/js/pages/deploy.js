@@ -85,9 +85,10 @@ export function DeployPage({ query }) {
     } });
     const pg = Switch({ label: 'Create a Postgres database', description: 'Adds DATABASE_URL and ConnectionStrings__Default to the app. The password stays on the server.', checked: !!(meta.postgresDb || (pre && pre.db)) });
     const env = KeyValueEditor({ secret: true, valuePlaceholder: 'value' });
-    const cf = Switch({ label: 'Map the hostname in Cloudflare', description: 'Adds the tunnel route and the proxied DNS record if they are missing. Never overwrites an existing record.', checked: true, onChange: (v) => { if (v) dnsSw.set(false); sync(); } });
+    const cf = Switch({ label: 'Map the hostname in Cloudflare', description: 'Adds the tunnel route and the proxied DNS record if they are missing. Never overwrites an existing record.', checked: true, onChange: (v) => { if (v) { dnsSw.set(false); manualSw.set(false); } sync(); } });
     const dnsNames = dnsp.map((p) => ({ route53: 'Route 53', digitalocean: 'DigitalOcean' })[p]).join(' / ');
-    const dnsSw = Switch({ label: `Add an A record in ${dnsNames}`, description: 'Points the hostname at this server and serves it directly with its own HTTPS certificate (ports 80 and 443 must be open). Never overwrites an existing record.', checked: !sess.cloudflare, onChange: (v) => { if (v) cf.set(false); sync(); } });
+    const dnsSw = Switch({ label: `Add an A record in ${dnsNames}`, description: 'Points the hostname at this server and serves it directly with its own HTTPS certificate (ports 80 and 443 must be open). Never overwrites an existing record.', checked: !sess.cloudflare, onChange: (v) => { if (v) { cf.set(false); manualSw.set(false); } sync(); } });
+    const manualSw = Switch({ label: 'My domain\'s DNS is at my registrar and I point it at this server myself', description: 'For a domain bought at HosterPK, Namecheap, GoDaddy ... where you add the A record by hand (the name to add is shown after you deploy). The site is served directly with its own free HTTPS certificate, so ports 80 and 443 must be open (DNS hosting, Direct HTTPS) and the A record must exist before the certificate can be issued.', checked: !!(meta && meta.direct) || (!pre && !sess.cloudflare && !dnsp.length), onChange: (v) => { if (v) { cf.set(false); dnsSw.set(false); } sync(); } });
 
     // --------------------------------------------------------------- layout
     const wrap = { dll: h('div', {}, Field({ label: '.NET entry DLL', id: ids.dll, hint: 'The main DLL in the publish folder. The server runs .NET 10; an app built for .NET 8/9 needs DOTNET_ROLL_FORWARD=Major below.' }, dll)),
@@ -122,7 +123,7 @@ export function DeployPage({ query }) {
         h('div', { class: 'mt-4' }, Field({ label: 'Also redirect these hostnames here', id: ids.redir, hint: 'Optional, comma separated. Example: www.example.com' }, redirects))),
       Card({ title: withHelp('Runtime', 'deploying-each-type'), subtitle: 'How the app starts' }, h('div', { id: 'runtimeBody', class: 'space-y-4' }, wrap.dll, wrap.start, wrap.cmd, wrap.docker, wrap.node, wrap.port, wrap.health,
         h('div', { id: 'pgWrap' }, pg), h('div', {}, h('span', { class: 'label' }, 'Environment variables'), env))),
-      sess.cloudflare || dnsp.length ? Card({ title: withHelp('DNS', 'domains-and-cloudflare') }, h('div', { class: 'space-y-4' }, sess.cloudflare ? cf : null, dnsp.length ? dnsSw : null)) : null);
+      Card({ title: withHelp('DNS', 'domains-and-cloudflare') }, h('div', { class: 'space-y-4' }, sess.cloudflare ? cf : null, dnsp.length ? dnsSw : null, manualSw)));
 
     const side = h('aside', { class: 'space-y-6 lg:sticky lg:top-6 lg:self-start' },
       Card({ title: 'Review' }, summary, h('div', { class: 'mt-5' }, goBtn)), progress);
@@ -147,7 +148,7 @@ export function DeployPage({ query }) {
       form.querySelector('#pgWrap').hidden = !isApp; form.querySelector('#runtimeBody').parentElement.parentElement.hidden = !isApp;
       form.querySelector('#customWrap').hidden = dom.value !== '__custom__'; sub.disabled = dom.value === '__custom__';
       hostPreview.replaceChildren(icon('globe', 'h-3.5 w-3.5'), host ? 'https://' + host : 'https://...');
-      const mapping = (sess.cloudflare && cf.get()) || (dnsp.length && dnsSw.get());
+      const mapping = (sess.cloudflare && cf.get()) || (dnsp.length && dnsSw.get()) || manualSw.get();
       hostNote.replaceChildren(...(host && !covered(host) && !mapping ? [Alert({ tone: 'warn', title: 'Not covered by the wildcard route' }, 'This hostname needs a Cloudflare tunnel route and a DNS record or the site will not be reachable. ', sess.cloudflare ? 'Turn on "Map the hostname in Cloudflare" below.' : 'Ask the owner to map it, or add it in Cloudflare by hand.')] : []));
       folderRow.style.display = srcMode.get() !== 'folder' ? 'none' : ''; zipInput.hidden = zipStatus.hidden = srcMode.get() !== 'zip'; gitSrc.el.hidden = !git; emptyNote.hidden = srcMode.get() !== 'empty';
       const steps = [srcMode.get() === 'empty' ? 'Create a starter page as the first release' : git ? 'Download the repository on the server (a read-only deploy key is added for private ones) and build it' : `Pack and upload ${srcMode.get() === 'zip' ? 'the unpacked zip' : 'the folder'} as a new release`, host ? `Serve https://${host} through Caddy` : 'Serve the site through Caddy'];
@@ -155,6 +156,7 @@ export function DeployPage({ query }) {
       if (isApp && pg.get()) steps.push('Create a Postgres database and user for it');
       if (sess.cloudflare && cf.get()) steps.push('Add the Cloudflare tunnel route and DNS record');
       if (dnsp.length && dnsSw.get()) steps.push(`Add an A record in ${dnsNames} and serve it with its own certificate`);
+      if (manualSw.get()) steps.push('Serve it directly with its own HTTPS certificate (you add the A record at your registrar)');
       steps.push('Keep the last 3 releases so you can roll back');
       summary.replaceChildren(...steps.map((s) => h('li', { class: 'flex gap-2' }, icon('check', 'mt-0.5 h-4 w-4 text-ok'), s)));
     }
@@ -162,7 +164,7 @@ export function DeployPage({ query }) {
     async function submit() {
       const t = type.get();
       const body = { name: name.value, hostname: hostname(), type: t, source: src.value, dll: dll.value, start: t === 'command' ? cmdStart.value : start.value, build: cmdBuild.value,
-        cport: cport.value, dockerfile: dockerfile.value, port: port.value, healthPath: healthPath.value, healthStatus: healthStatus.value, runtime: nodeVer.value, postgresDb: pg.get(), mapCf: !!(sess.cloudflare && cf.get()), mapDns: !!(dnsp.length && dnsSw.get()), redirectFrom: redirects.value.split(','), env: env.get() };
+        cport: cport.value, dockerfile: dockerfile.value, port: port.value, healthPath: healthPath.value, healthStatus: healthStatus.value, runtime: nodeVer.value, postgresDb: pg.get(), mapCf: !!(sess.cloudflare && cf.get()), mapDns: !!(dnsp.length && dnsSw.get()), direct: manualSw.get(), redirectFrom: redirects.value.split(','), env: env.get() };
       let r;
       if (srcMode.get() === 'empty') {
         if (!['static', 'php', 'node', 'command'].includes(t)) { toast('An empty site can be Static, PHP, Node or Commands', { tone: 'bad' }); return; }

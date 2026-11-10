@@ -31,7 +31,10 @@
 
 * **Mail** page: a free mail server (Postfix, Dovecot, Rspamd) with domains, mailboxes, aliases/forwarders/catch-all, autoresponders, DKIM, spam filter (to Junk), relay option, DNS records and check, queue and logs. Tested against the real software (`tests/test_mail_integration.py`).
 
+* **Domain at a registrar** (HosterPK, Namecheap ...): the Deploy page has a switch for "my DNS is at my registrar" (direct HTTPS), Domains has a **Check a domain** tab that reads the real DNS and says what to change, and the manual has the step-by-step guide for both routes (registrar DNS, or this server as the DNS).
+
 ### Fixed
+* Direct-HTTPS sites: `https://www.example.com` (and other redirected names) failed with a certificate error because no certificate was requested for them. They now get one and redirect to the main address. Turning Direct HTTPS on or off for a site now covers its redirect blocks too.
 * `install_on_server.py`: when Caddy rejects the new site, it now prints Caddy's own error, lists other Caddy files that define the same address, and puts the previous site file back (it used to hide the reason and delete the file).
 * `install_on_server.py`: re-running with a new `--domain` now also updates the allowed hostname (it was left on the old one, so the app refused the new address). New `--direct-https` serves `https://DOMAIN` from the server itself (Let's Encrypt); the default is plain http behind a Cloudflare tunnel.
 * `server_perf` test no longer races the server thread that releases its request slot.

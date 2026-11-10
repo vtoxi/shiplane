@@ -15,7 +15,7 @@ const PROVIDERS = [
 export function DomainsPage() {
   const sess = store.session;
   const isOn = (id) => (id === 'cloudflare' ? !!sess.cloudflare : (sess.dnsProviders || []).includes(id));
-  let tab = (location.hash.match(/[?&]tab=(\w+)/) || [])[1] || (PROVIDERS.find((p) => isOn(p.id)) || PROVIDERS[0]).id;
+  let tab = (location.hash.match(/[?&]tab=(\w+)/) || [])[1] || (PROVIDERS.find((p) => isOn(p.id)) || { id: 'check' }).id;      // with no provider connected: the readiness check
   const body = h('div', { class: 'space-y-6' });
 
   function notConnected(p) {
@@ -107,12 +107,28 @@ export function DomainsPage() {
       Card({ title: 'Wildcard certificates', subtitle: 'On the server', bodyClass: '' }, list)];
   }
 
+  // Is a domain bought at a registrar (HosterPK, Namecheap, GoDaddy ...) ready to be served from this server? Looks the real DNS up; changes nothing.
+  function checkTab() {
+    const domain = Input({ placeholder: 'example.pk', mono: true });
+    const out = h('div', { class: 'mt-4 space-y-3' });
+    const go = Button({ label: 'Check', icon: 'search', variant: 'primary', onClick: () => busy(go, async () => {
+      const r = await attempt(api(`/api/domaincheck?domain=${encodeURIComponent(domain.value.trim())}`));
+      if (!r) return;
+      fill(out, h('p', { class: 'text-sm text-muted' }, r.ip ? `Comparing with this server's address ${r.ip}.` : 'This server\'s public address could not be read, so only what the DNS says is shown.'),
+        ...r.findings.map((f) => Alert({ tone: f.status, title: f.title }, f.detail, f.fix ? h('p', { class: 'mt-2 text-sm' }, h('strong', {}, 'Fix: '), f.fix) : null)),
+        h('p', { class: 'text-xs text-muted' }, 'DNS changes can take from a few minutes to a few hours to be seen everywhere. When everything is green, deploy the site (Deploy, DNS card: "My domain\'s DNS is at my registrar") and it gets its HTTPS certificate by itself.'));
+    }) });
+    return [Card({ title: 'Check a domain', subtitle: 'For a domain whose DNS you edit at your registrar. Shows what is wrong, and exactly what to change.' },
+      h('div', { class: 'flex flex-col gap-3 sm:flex-row sm:items-end' }, h('div', { class: 'min-w-0 flex-1 sm:max-w-md' }, Field({ label: 'Domain', hint: 'Without www' }, domain)), go), out)];
+  }
+
   function draw() {
     const tabs = PROVIDERS.map((p) => ({ id: p.id, text: `${p.label} · ${isOn(p.id) ? 'connected' : 'not connected'}`,
       label: h('span', { class: 'inline-flex items-center gap-2' }, Logo(p.id, 'h-4 w-4') || icon('cloud', 'h-4 w-4'), p.label, Badge(isOn(p.id) ? 'connected' : 'not connected', isOn(p.id) ? 'ok' : 'neutral')) }));
+    tabs.unshift({ id: 'check', text: 'Check a domain', label: h('span', { class: 'inline-flex items-center gap-2' }, icon('search', 'h-4 w-4'), 'Check a domain') });
     tabs.push({ id: 'certs', text: 'Wildcard certificates', label: h('span', { class: 'inline-flex items-center gap-2' }, Logo('letsencrypt', 'h-4 w-4') || icon('shield', 'h-4 w-4'), 'Wildcard certificates') });
     const p = PROVIDERS.find((x) => x.id === tab);
-    const content = tab === 'certs' ? certsTab() : !isOn(p.id) ? [notConnected(p)] : p.id === 'cloudflare' ? [CloudflarePage({ embedded: true }).el] : providerTab(p);
+    const content = tab === 'check' ? checkTab() : tab === 'certs' ? certsTab() : !isOn(p.id) ? [notConnected(p)] : p.id === 'cloudflare' ? [CloudflarePage({ embedded: true }).el] : providerTab(p);
     fill(body, Tabs({ tabs, active: tab, onChange: (t) => { tab = t; history.replaceState(null, '', `#/domains?tab=${t}`); draw(); } }), ...content);
   }
 

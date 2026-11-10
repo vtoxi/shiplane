@@ -177,6 +177,7 @@ If the server part succeeds but the DNS step fails, the site stays deployed and 
 
 * [Cloudflare](#/domains?tab=cloudflare): check that the token and tunnel are healthy, see every hostname the tunnel serves and its DNS state, **map** new hostnames and **remove** old ones. It never overwrites a DNS record that already exists; if one does, it says "conflict". To take such a name over, a super admin presses **Replace record**: you see where it points now and must type the hostname; only that name's A/AAAA/CNAME record is deleted. Mail and TXT records are never touched.
 * [Amazon Route 53](#/domains?tab=route53) and [DigitalOcean](#/domains?tab=digitalocean): every A record, those pointing at this server marked; **Add records** and **Remove**. Never overwrites a record that points elsewhere.
+* **Check a domain** (first tab, needs no provider): for a domain whose DNS you edit at your registrar. Looks the real DNS up and tells you what is wrong (a parking page A record, an IPv6 or CAA record in the way, the missing `www`, who hosts the DNS) and exactly what to change. See *Using a domain from HosterPK (or any registrar)*;
 * [Wildcard certificates](#/domains?tab=certs): one Let's Encrypt certificate for a whole domain (see Wildcard certificates below).
 
 ### DNS hosting
@@ -245,6 +246,55 @@ Cloudflare dashboard, My Profile, API Tokens, Create Token, Custom token. Permis
 * Zone, DNS, **Edit**
 
 Limit it to your account (and the zones you want). Paste it on [Integrations, DNS providers](#/integrations?tab=dns). Without a token the app still works; only Cloudflare mapping is switched off.
+
+## Using a domain from HosterPK (or any registrar)
+
+You bought a domain (for example `example.pk`) at HosterPK, Namecheap, GoDaddy or similar, and want it to open a site on this server. There are two routes. **Route A** keeps the DNS at your registrar and is the simplest; **Route B** makes this server the domain's DNS. Both end with a free HTTPS certificate that Caddy gets and renews by itself.
+
+The names of the buttons differ between registrars. Look in your registrar's client area for the domain and for words such as **DNS**, **DNS Management**, **Manage DNS**, **Zone Editor**, **Nameservers**, **Child nameservers**, **Host records** or **Glue records**. If your domain also has a hosting plan at the registrar, its DNS may be edited in that plan's panel (for example cPanel's Zone Editor); the rule is always the same: edit the DNS at the place whose nameservers the domain uses (the **Check a domain** tool tells you which).
+
+### What you need first
+
+* This server's public IP address. The **Check a domain** tab on [Domains](#/domains) shows it ("Comparing with this server's address ...").
+* Ports **80** and **443** open to the internet (needed to get and use the certificate): [Firewall & email](#/protect), add `allow 80` and `allow 443` (or [DNS hosting](#/dns), Direct HTTPS tab, **Open ports 80 and 443**). Nothing to do if the firewall is off.
+
+### Route A: keep the DNS at your registrar (recommended)
+
+1. **Point the domain at the server.** In the registrar's DNS manager:
+   * make the **A record** for `@` (the bare domain) have the value of this server's IP. Registrars often put a *parking page* record there when you buy a domain: **edit it**, do not add a second one. Delete any other A record for `@`;
+   * make `www` a **CNAME** of `@` (or the bare domain), or an A record with the same IP;
+   * **delete AAAA (IPv6) records** for `@` and `www` unless this server really answers on them: browsers and Let's Encrypt try IPv6 first, and a leftover parking address makes HTTPS fail;
+   * if the DNS has **CAA** records, one must allow `letsencrypt.org` (flags `0`, tag `issue`, value `letsencrypt.org`), or delete them;
+   * a short TTL (300 seconds) makes changes show up faster.
+2. **Check it.** [Domains](#/domains), **Check a domain**, type `example.pk`, press **Check**. Green means ready. Red or yellow items say exactly what to change at the registrar. DNS changes can take from a few minutes to a few hours to be seen everywhere: press Check again until everything is green.
+3. **Deploy the site.** [Deploy](#/deploy): choose the code (zip, folder, Git, or an empty starter site), under **Address** choose the custom domain and type `example.pk`, and in **Also redirect these hostnames here** type `www.example.pk`. In the **DNS** card switch on **My domain's DNS is at my registrar and I point it at this server myself**. Deploy.
+4. **Open it.** `https://example.pk` shows the site (the first visit can take a few seconds while the certificate is issued), `http://` and `https://www.example.pk` lead to it too.
+
+An existing site can be moved to the domain without redeploying: its **Manage** tab, **Address**, type the new name. Turn **Direct HTTPS** on for it at [DNS hosting](#/dns) (Direct HTTPS tab) if the site was created behind the tunnel.
+
+### Route B: this server is the domain's DNS
+
+Choose this to manage every record in Shiplane, or to run your own nameservers. The server is then a single point of failure for the domain's DNS.
+
+1. [DNS hosting](#/dns): choose the nameserver names, for example `ns1.example.pk` and `ns2.example.pk` (both can be this server), add the zone `example.pk`, press **Apply**, then **Open port 53** (type `open`). The zone is checked with `nsd-checkzone` before anything is switched on. It starts with the nameservers, `@` and `www` pointing at this server.
+2. **Register the nameservers at the registrar** (called *child nameservers*, *private nameservers*, *host records* or *glue records*): create `ns1.example.pk` and `ns2.example.pk`, each with this server's IP. Do this before step 3.
+3. **Switch the domain's nameservers** to `ns1.example.pk` and `ns2.example.pk`. Some registries test that the nameservers answer first, which is why steps 1 and 2 come first. Propagation can take up to a day.
+4. Edit records at [DNS hosting](#/dns), Zones. Sites on a domain served by your own nameservers are served directly with HTTPS automatically.
+
+### Mail for the domain
+
+[Mail](#/mail): add the domain, then put the records it shows (MX, SPF, DKIM, DMARC) into the same DNS (the registrar's DNS manager in Route A, the zone in Route B, where they can be added in one go), and set the server IP's reverse DNS (PTR) in your hosting provider's panel. **Check DNS** on the Mail page verifies them.
+
+### If something does not work
+
+| What you see | What it means and what to do |
+|---|---|
+| **Check a domain** says the A record points elsewhere | A parking page or old record is still there. Edit it to this server's IP and delete other A records for `@`. |
+| The browser shows a parking page or an old site | Old DNS is still cached (wait, or lower the TTL first next time), or a second A record exists. |
+| `https://` shows a certificate error or the connection fails, `http://` works | The certificate is not issued yet. Check ports 80 and 443 are open, the A record is right, there is no AAAA record pointing elsewhere and no CAA record blocking Let's Encrypt. Caddy retries by itself. Let's Encrypt allows only a few failed attempts per hour: fix the cause, then wait before expecting a new try. |
+| `https://www.example.pk` fails but the bare domain works | `www` has no DNS record, or the site was deployed before `www` was listed under **Also redirect these hostnames here**: add the record and redeploy (or rename the address). |
+| "Connection refused" or it hangs | Ports 80/443 are closed in the firewall, or the A record has a wrong IP. |
+| The domain still shows the old nameservers | In Route B the registrar has not accepted the change yet: check the child nameservers exist and port 53 is open (`dig @server-ip example.pk` should answer). |
 
 ## Server maintenance
 

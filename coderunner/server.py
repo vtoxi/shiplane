@@ -25,7 +25,7 @@ import traceback
 import time
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, activity, backupupload, files, mail, terminal, alerts, apikeys, appaddress, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, fleet, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
+from . import __version__, activity, backupupload, domaincheck, files, mail, terminal, alerts, apikeys, appaddress, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, fleet, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
 from .runner import explain_ssh as runner_explain, popen, q, run, who
 
 # CODERUNNER_TOKEN pins the launch token (token mode); otherwise a fresh one per launch.
@@ -1101,6 +1101,18 @@ def api_mail_ports(qs, body):
     if not body.get('preview'):
         audit('mail-open-ports', ', '.join(str(p) for p in mail.PORTS))
     return out
+
+
+@route('GET', '/api/domaincheck', role='admin')
+def api_domaincheck(qs, body):
+    """Is this domain's DNS ready to be served from this server? Looks the real DNS up; changes nothing."""
+    ip = qs.get('ip', [''])[0].strip()
+    if not ip:
+        try:
+            ip = dnsproviders.detect_ip(cfg())
+        except Exception:
+            ip = ''
+    return domaincheck.check(qs.get('domain', [''])[0], ip)
 
 
 @route('GET', '/api/apps', role='admin')
