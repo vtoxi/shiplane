@@ -8,6 +8,8 @@
 
 Zips the folder, uploads it, starts the deploy, streams the log and exits non-zero if the deploy failed
 (also when it was rolled back). Flags override a site's saved settings.
+SHIPLANE_URL and SHIPLANE_KEY can also be set in a .env file in the current directory
+or alongside this script.
 """
 import argparse
 import io
@@ -20,6 +22,24 @@ import urllib.request
 import zipfile
 
 FIELDS = ('type', 'hostname', 'port', 'dll', 'start', 'build', 'cport', 'dockerfile', 'postgresDb', 'redirectFrom', 'healthPath', 'healthStatus', 'runtime')
+
+
+def load_dotenv(path='.env'):
+    if not os.path.isfile(path):
+        return
+    with open(path, encoding='utf-8') as env_file:
+        for line_number, line in enumerate(env_file, 1):
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            if '=' not in line:
+                raise ValueError('%s:%d: expected NAME=VALUE' % (path, line_number))
+            name, value = (part.strip() for part in line.split('=', 1))
+            if not name or not (name[0].isalpha() or name[0] == '_') or not all(c.isalnum() or c == '_' for c in name):
+                raise ValueError('%s:%d: invalid environment variable name' % (path, line_number))
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                value = value[1:-1]
+            os.environ.setdefault(name, value)
 
 
 def call(base, key, method, path, data=None, raw=None):
@@ -48,6 +68,8 @@ def zip_folder(folder):
 
 
 def main():
+    load_dotenv()
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('folder')
     ap.add_argument('--site', required=True, help='site name')
@@ -56,8 +78,10 @@ def main():
     for f in FIELDS:
         ap.add_argument('--' + f.lower() if f != f.lower() else '--' + f, dest=f, default=None)
     a = ap.parse_args()
-    if not (a.url and a.key and os.path.isdir(a.folder)):
-        sys.exit('Need SHIPLANE_URL, SHIPLANE_KEY and an existing folder')
+    if not (a.url and a.key):
+        sys.exit('Need SHIPLANE_URL and SHIPLANE_KEY (set them in .env or the environment)')
+    if not os.path.isdir(a.folder):
+        sys.exit('Deploy folder does not exist: %s' % a.folder)
     base = a.url.rstrip('/')
     app = {'name': a.site, 'mapCf': False}
     site = next((s for s in call(base, a.key, 'GET', '/api/status')['sites'] if s['name'] == a.site), None)
