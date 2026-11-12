@@ -696,6 +696,10 @@ Admins reach `/var/www`, `/srv` and `/home`. Super admins also reach `/etc`, `/o
 
 **Protected folders.** A folder that is not safe to delete or rename shows a lock and "Protected" instead of the buttons (hover for the reason): the folder of a live site (delete the site from the Sites page instead), a live site's `current` and `releases`, an account's home folder, the folders directly inside `/etc`, and any folder a running program is working in. The server checks this again on every request, so it cannot be bypassed.
 
+## Reaching the server over Tailscale
+
+`scripts/setup_tailscale.sh` puts the server on your [Tailscale](https://tailscale.com) network so your own computers open Shiplane directly at `https://<server>.<tailnet>.ts.net`, without exposing it publicly. In the Tailscale admin console turn on MagicDNS and HTTPS Certificates first. Then, on the server: `sudo ./setup_tailscale.sh` (it prints a link to approve the machine) or `sudo TS_AUTHKEY=tskey-auth-... ./setup_tailscale.sh` to do it unattended. The script installs Tailscale from its official apt repository, serves `127.0.0.1:8765` on the tailnet, and adds the tailnet name to the allowed hostnames while keeping your existing ones. `--status` shows the state; `--remove` undoes the serving and the hostname.
+
 ## Cleaning temporary storage every day
 
 `scripts/shiplane-tmp-cleanup.sh` removes files in `/tmp` and `/var/tmp` that nobody has read or changed for 3 days (and the empty folders left behind). It skips sockets, systemd, tmux and SSH-agent folders and anything a running program has open. Copy it to the server and run `sudo ./shiplane-tmp-cleanup.sh --install` to run it every day at 03:30; `--dry-run` lists what would go, `DAYS=7` is gentler, `--uninstall` removes it. Each run adds a line to `/var/log/shiplane-tmp-cleanup.log`.
