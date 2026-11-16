@@ -3,6 +3,7 @@
 
     export SHIPLANE_URL=https://server.example.com
     export SHIPLANE_KEY=crk_...                      # an API key from the Users page (role: admin)
+    (or put both in scripts/.env as SHIPLANE_URL=... and SHIPLANE_KEY=...; it is git-ignored)
     python shiplane-deploy.py ./dist --site my-api   # redeploy an existing site with its saved settings
     python shiplane-deploy.py ./dist --site new-site --hostname new.example.com --type static   # first deploy
 
@@ -19,6 +20,24 @@ import urllib.error
 import urllib.request
 import zipfile
 
+
+
+def load_env_file():
+    """SHIPLANE_URL / SHIPLANE_KEY from scripts/.env (next to this script) or ./.env when they are not already set; the real environment wins."""
+    for path in (os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'), os.path.join(os.getcwd(), '.env')):
+        if os.path.isfile(path):
+            with open(path, encoding='utf-8-sig') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('export '):
+                        line = line[7:].lstrip()
+                    k, sep, v = line.partition('=')
+                    k, v = k.strip(), v.strip()
+                    if sep and k in ('SHIPLANE_URL', 'SHIPLANE_KEY') and k not in os.environ:
+                        os.environ[k] = v[1:-1] if len(v) >= 2 and v[0] == v[-1] and v[0] in '"\'' else v.split(' #', 1)[0].rstrip()
+
+
+load_env_file()
 FIELDS = ('type', 'hostname', 'port', 'dll', 'start', 'build', 'cport', 'dockerfile', 'postgresDb', 'redirectFrom', 'healthPath', 'healthStatus', 'runtime')
 
 

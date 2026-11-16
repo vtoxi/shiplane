@@ -9,7 +9,7 @@ It is a thin client of Shiplane's own HTTP API, so it can do exactly what the AP
     python mcp/shiplane_mcp.py           # speaks MCP (JSON-RPC, one message per line) on stdin/stdout
 
 Optional environment:
-    SHIPLANE_ENV_FILE=path     read these settings from a file instead (default: ./.env, then ~/.shiplane.env; real environment variables win)
+    SHIPLANE_ENV_FILE=path     read these settings from a file instead (default: ./.env, scripts/.env, ~/.shiplane.env; real environment variables win)
     SHIPLANE_MCP_READONLY=1    hide every tool that changes something (and make shiplane_api GET-only)
     SHIPLANE_MCP_WAIT=900      seconds to wait for a deploy/backup/upgrade job to finish before returning its job id
 Everything that deletes something needs an explicit `confirm` argument; tools carry MCP readOnly/destructive hints too.
@@ -29,9 +29,10 @@ VERSION = '1.1.0'
 
 def load_env_file():
     """Fill SHIPLANE_* settings from an env file when they are not already in the environment (the real environment always wins).
-    Looked up in order: $SHIPLANE_ENV_FILE, ./.env, ~/.shiplane.env. Lines are KEY=VALUE (optionally `export KEY=VALUE`, quoted values allowed);
+    Looked up in order: $SHIPLANE_ENV_FILE, ./.env, scripts/.env of this repository, ~/.shiplane.env. Lines are KEY=VALUE (optionally `export KEY=VALUE`, quoted values allowed);
     only SHIPLANE_* names are read. Values are never printed."""
-    for path in (os.environ.get('SHIPLANE_ENV_FILE'), os.path.join(os.getcwd(), '.env'), os.path.expanduser('~/.shiplane.env')):
+    here = os.path.dirname(os.path.abspath(__file__))
+    for path in (os.environ.get('SHIPLANE_ENV_FILE'), os.path.join(os.getcwd(), '.env'), os.path.join(here, '..', 'scripts', '.env'), os.path.expanduser('~/.shiplane.env')):
         if not path or not os.path.isfile(path):
             continue
         try:

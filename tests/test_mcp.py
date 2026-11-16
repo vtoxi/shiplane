@@ -200,6 +200,13 @@ def test_settings_can_come_from_an_env_file():
     assert not ask({'SHIPLANE_ENV_FILE': f})['isError']                                # explicit file
     open(os.path.join(d, '.env'), 'w').write('SHIPLANE_URL=%s\nSHIPLANE_KEY=%s\n' % (URL, KEY))
     assert not ask({}, cwd=d)['isError']                                               # ./.env of the folder Claude was started in
+    sd = os.path.join(ROOT, 'scripts', '.env')
+    assert not os.path.exists(sd)
+    try:
+        open(sd, 'w').write('SHIPLANE_URL=%s\nSHIPLANE_KEY=%s\n' % (URL, KEY))
+        assert not ask({}, cwd=tempfile.mkdtemp())['isError']                              # scripts/.env of the repository, whatever folder Claude started in
+    finally:
+        os.remove(sd)
     assert 'HTTP 401' in ask({'SHIPLANE_KEY': 'wrong'}, cwd=d)['content'][0]['text']   # the real environment wins over the file
     assert ask({}, cwd=tempfile.mkdtemp())['isError']                                  # no file, no settings: a clear error, not a crash
 
