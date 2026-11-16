@@ -140,12 +140,18 @@ def state(hosts=None):
     cfg = (call('GET', tpath) or {}).get('config') or {}
     ingress = cfg.get('ingress') or []
     rules = [r for r in ingress if r.get('hostname')]
-    if hosts is None:
+    listing = hosts is None
+    if listing:
         hosts = [r['hostname'] for r in rules]
     zones, rows = {}, []
     for h in hosts:
-        zid, zname = zone_of(h, zones)
-        route = 'explicit' if any(r['hostname'] == h for r in rules) else 'wildcard' if any(covers(r['hostname'], h) for r in rules) else 'missing'
+        try:
+            zid, zname = zone_of(h, zones)
+        except RuntimeError:
+            if listing:                          # ponytail: a stale rule is hidden from the list, not an error; unmap can still remove it
+                continue
+            raise
+        route ='explicit' if any(r['hostname'] == h for r in rules) else 'wildcard' if any(covers(r['hostname'], h) for r in rules) else 'missing'
         recs = [r for r in (call('GET', '/zones/%s/dns_records?name=%s' % (zid, quote(h, safe=''))) or []) if r['type'] in ('A', 'AAAA', 'CNAME')]
         detail = ''
         if any(r['type'] == 'CNAME' and r['content'] == target for r in recs):
@@ -225,7 +231,10 @@ def unmap_hosts(hosts):
         call('PUT', tpath, {'config': cfg})
     zones = {}
     for h in hosts:
-        zid, _ = zone_of(h, zones)
+        try:
+            zid, _ = zone_of(h, zones)
+        except RuntimeError:                     # a leftover rule for a domain that is not in this account: no DNS to remove
+            continue
         for r in call('GET', '/zones/%s/dns_records?name=%s' % (zid, quote(h, safe=''))) or []:
             if r['type'] == 'CNAME' and r['content'] == target:
                 call('DELETE', '/zones/%s/dns_records/%s' % (zid, r['id']))

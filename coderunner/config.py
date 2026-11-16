@@ -140,11 +140,12 @@ def cloudflare_ready():
     return bool(c['api_token'] and c['account_id'] and c['tunnel_id'])
 
 
-def clean_hosts(v):
+def clean_hosts(v, wildcard=False):
+    """`wildcard` also accepts a leading `*.` (only for removing a tunnel rule that already exists)."""
     hosts = [str(h).strip().lower() for h in (v if isinstance(v, list) else str(v).replace('\n', ',').split(',')) if str(h).strip()]
     if not hosts:
         raise ValueError('Type at least one hostname')
     for h in hosts:
-        if not HOST_RE.match(h) or '.' not in h:
+        if not HOST_RE.match(h[2:] if wildcard and h.startswith('*.') else h) or '.' not in h:
             raise ValueError('bad hostname: ' + h)
     return hosts

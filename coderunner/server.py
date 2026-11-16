@@ -1682,7 +1682,7 @@ def api_map_replace(qs, body):
 @route('POST', '/api/mapping/unmap')
 def api_unmap(qs, body):
     need_cf()
-    hosts = config.clean_hosts(body.get('hosts'))
+    hosts = config.clean_hosts(body.get('hosts'), wildcard=True)
     lines = cloudflare.unmap_hosts(hosts)
     audit('cf-unmap', ', '.join(hosts), '; '.join(lines)[:200])
     return {'lines': lines}

@@ -137,6 +137,12 @@ for bad in ('a b.example.com', 'x;rm.example.com', 'nodot', ''):
     except ValueError:
         check('clean_hosts rejects %r' % bad, True)
 check('clean_hosts accepts newline separated input', config.clean_hosts('a.example.com\nb.example.com') == ['a.example.com', 'b.example.com'])
+check('clean_hosts: wildcard only when asked', config.clean_hosts('*.x.example.com', wildcard=True) == ['*.x.example.com'])
+try:
+    config.clean_hosts('*.x.example.com')
+    check('clean_hosts rejects a wildcard by default', False)
+except ValueError:
+    check('clean_hosts rejects a wildcard by default', True)
 
 print('\nALL PASSED' if ok else '\nSOME FAILED')
 sys.exit(0 if ok else 1)
