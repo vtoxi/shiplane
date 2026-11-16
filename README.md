@@ -50,6 +50,7 @@ coderunner/                 backend, standard library only
   maintenance.py            domain/SSL health, per-site scheduled tasks (cron), disk usage and cleanup
   monitor.py  billing.py    live logs, 24 h uptime history, Hetzner/Cloudflare cost estimate
   alerts.py  backups.py     Telegram/webhook alerts; nightly backups, retention, restore
+  mcp_core.py               the MCP tools for AI assistants (stdio and the hosted POST /mcp endpoint)
   settings.py               small JSON store for those settings (data/settings.json)
   remote/                   the fixed scripts that run on the server
 web/                        frontend, no build step to run it
@@ -58,11 +59,17 @@ web/                        frontend, no build step to run it
   manual.md                 the in-app manual
 frontend/                   design system source (Tailwind 3) - only to change the look
 scripts/install_on_server.py  installs/upgrades the app on the server (systemd + Caddy)
+scripts/setup_tailscale.sh  join the server to a Tailscale network and serve the app there
+scripts/shiplane-tmp-cleanup.sh  daily /tmp and /var/tmp cleanup on the server (--install for cron)
+mcp/shiplane_mcp.py         local MCP server for Claude (stdio); see the Manual, "Using Shiplane from an AI"
 tests/                      end-to-end and unit checks (fake Cloudflare, real server)
 ```
 
 The UI only calls `/api/*`, so any other client (a mobile app) can use the same API with an API key:
 `Authorization: Bearer crk_...` (create one in Settings). `GET /api/routes` lists every endpoint.
+
+AI assistants (Claude and other MCP clients) can use the same API through about 100 ready-made tools. A super admin switches on the hosted endpoint in Settings, then anyone with a key runs
+`claude mcp add --transport http shiplane https://<your-shiplane>/mcp --header "Authorization: Bearer crk_..."` (see the Manual).
 
 ## Design system
 

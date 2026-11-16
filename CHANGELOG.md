@@ -33,6 +33,11 @@
 
 * **Domain at a registrar** (HosterPK, Namecheap ...): the Deploy page has a switch for "my DNS is at my registrar" (direct HTTPS), Domains has a **Check a domain** tab that reads the real DNS and says what to change, and the manual has the step-by-step guide for both routes (registrar DNS, or this server as the DNS).
 
+* **Delete everything** for a site: also drops its Postgres/MySQL databases and their backups, and removes its Git connection, deploy key, checkout and scheduled tasks.
+* **Files: protected folders**: live sites (and their `current`/`releases`), account home folders, folders directly in `/etc` and folders a running program is using show "Protected" and are refused by the server for delete and rename.
+* **MCP for AI assistants**: about 100 tools over the existing API for Claude and other MCP clients. Local stdio server (`mcp/shiplane_mcp.py`, `.mcp.json`; URL and key from the environment or `scripts/.env`) and a **hosted endpoint** `POST /mcp` (off by default, switched on by a super admin in Settings, API-key Bearer only, each call made with the caller's own key). Deletes need `confirm`; read-only keys see read-only tools; the Terminal is never reachable.
+* `scripts/setup_tailscale.sh` (join a tailnet and serve the app over Tailscale HTTPS, adds the tailnet name to the allowed hostnames) and `scripts/shiplane-tmp-cleanup.sh` (daily `/tmp` and `/var/tmp` cleanup, `--install` for cron).
+
 ### Fixed
 * Direct-HTTPS sites: `https://www.example.com` (and other redirected names) failed with a certificate error because no certificate was requested for them. They now get one and redirect to the main address. Turning Direct HTTPS on or off for a site now covers its redirect blocks too.
 * `install_on_server.py`: when Caddy rejects the new site, it now prints Caddy's own error, lists other Caddy files that define the same address, and puts the previous site file back (it used to hide the reason and delete the file).
@@ -40,10 +45,12 @@
 * `server_perf` test no longer races the server thread that releases its request slot.
 
 ### Security
+* Terminal: a background sweep now enforces the idle and age limits even when nobody opens the page, and closes shells whose owner was deleted, disabled or is no longer a super admin (or all of them when the Terminal is switched off).
 * Settings files (`server.json`, `cloudflare.json`, `dnsproviders.json`) are tightened to owner-only even when they already existed with looser permissions.
 * A deploy can no longer publish this app's own settings, data or SSH keys; deploying a folder by path is limited to super admins (admins and API keys upload a zip).
 * Wrong-typed or missing request values answer `400` instead of a server error.
 
 ### Tests and tooling
+* Files, Terminal, Mail, backup upload, domain check and MCP tests are in the unit runner; their modules are in the 95% coverage gate. A drift test fails if an MCP tool points at a route that no longer exists.
 * GitHub Actions runs the unit tests and the JavaScript checks on every push and pull request.
 * New tests for zip upload, Postgres operations, deploy jobs, every API route (empty and junk requests) and the HTTP security rules; `uploads.py`, `dbops.py` and `deploy.py` are under the 95% coverage gate.

@@ -12,6 +12,8 @@ Please report vulnerabilities privately (GitHub: Security, Report a vulnerabilit
 * Requests need an allowed `Host` header; browser writes need the `X-Requested-With: coderunner` header. The only exception is the Git webhook, which is protected by an HMAC or token over the raw body and rate-limited.
 * Passwords are salted scrypt hashes, sessions and API keys are stored as hashes, sign-in is throttled, two-factor is supported and can be required.
 * `server.json`, `cloudflare.json` and `dnsproviders.json` are written owner-only (`0600`), including when they already existed with looser permissions. Secrets are write-only in the UI and API.
+* The hosted MCP endpoint (`POST /mcp`) is off until a super admin switches it on. Only an API key signs in there (no cookie, no deploy-only key), the `Origin` header is checked, and every tool call is an ordinary API request made with the caller's own key, so roles, key scopes and the Activity log apply unchanged. At most two calls run at once. The Terminal and the super-admin screens cannot be reached with an API key.
+* The Files page refuses to delete or rename live sites, account home folders, folders directly in `/etc` and folders a running program is using; the Terminal closes idle shells on a timer and when their owner loses super-admin rights.
 * A deploy cannot publish this app's own settings, data or SSH keys. Only a super admin can deploy a folder by path; others upload a zip.
 
 ## Running it safely

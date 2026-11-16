@@ -129,7 +129,7 @@ One page per site. At the top right: **Check now** (checks the public address at
 * **Git**: the connected repository with **Deploy now**, the last deploy and its result. Webhook, build settings, private-repository key and disconnect are folded sections below (see Deploy from Git).
 * **Logs**: the service log, with search by text, level and time.
 * **Config**: read-only view of the generated Caddy file, systemd unit and metadata.
-* **Manage**: restart / stop / start, run a one-off command, and **Delete** (type the site name to confirm; optionally also drop its database and remove its Cloudflare or DNS records).
+* **Manage**: restart / stop / start, run a one-off command, and **Delete** (type the site name to confirm). **Delete everything about this site** (on by default) also removes its Postgres and MySQL databases, the backups of those databases, its Git connection, deploy key and checkout, and its scheduled tasks; you can also remove its Cloudflare or DNS records. It cannot be undone.
 
 ### Change a site's address
 
@@ -527,6 +527,8 @@ An API key has the **admin** role. Errors come back as JSON `{"error": "..."}` w
 | `GET /api/users`, `POST /api/users/create`, `/update`, `/reset-code`, `/reset-2fa`, `/delete` | Accounts (super admin) |
 | `GET/POST /api/alerts`, `POST /api/alerts/test`, `GET/POST /api/backups/schedule`, `POST /api/backups/run`, `POST /api/databases/restore`, `POST /api/policy` | Alerts, backup schedule and restore, security policy |
 | `POST /api/auth/login-2fa`, `/api/auth/2fa/start`, `/2fa/enable`, `/2fa/disable` | Two-factor sign-in (account sessions only, not API keys) |
+| `GET /api/mcp`, `POST /api/mcp` | Is the hosted AI (MCP) endpoint on; switch it on or off (super admin, browser only) |
+| `POST /mcp` | The hosted MCP endpoint (JSON-RPC over HTTP). Needs `Authorization: Bearer crk_...`; off until switched on (see *Using Shiplane from an AI*) |
 | `GET /api/routes` | This list, generated |
 
 ## Deploy from the command line or CI
@@ -629,6 +631,9 @@ Everyone needs their **own** server user and SSH key, so that actions can be tra
 | `cloudflare.json` | Account and tunnel IDs, and the API token if you have one. |
 | `data/` | The activity log, API key hashes and the accounts database (`users.db`). On the server this is `/var/lib/coderunner`. |
 | `scripts/install_on_server.py` | Installs or upgrades the app on the server. |
+| `scripts/setup_tailscale.sh` | Puts the server on your Tailscale network and serves the app there (see *Reaching the server over Tailscale*). |
+| `scripts/shiplane-tmp-cleanup.sh` | Daily cleanup of `/tmp` and `/var/tmp` on the server (see *Cleaning temporary storage every day*). |
+| `mcp/shiplane_mcp.py`, `.mcp.json` | The local (stdio) MCP server for Claude; the tools themselves are in `coderunner/mcp_core.py`. |
 | `connect-server.bat` / `.sh` | Private SSH tunnel to the app on the server. |
 | `tests/` | Automated checks (`run_unit_tests.py` runs all the no-server unit tests with a coverage gate; plus `test_app.py`, `test_local_mode.py`, `check_js.mjs`). |
 
