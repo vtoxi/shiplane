@@ -688,11 +688,33 @@ Screens: **Firewall & email** in the sidebar (Network group) has tabs for the fi
 
 It is a real root shell, so treat access to it like the root password. Only super admins signed in with a browser can use it (not API keys, not other super admins' sessions). What you type is never stored; the Activity log records only that a terminal was opened, by whom, as which shell, and for how long. **Switch the terminal off** (link under it) closes all terminals and blocks new ones until a super admin switches it on again; it can also be left off. The terminal needs the app to run on Linux or macOS (on Windows, use SSH from your own terminal).
 
+A background sweep (every 30 seconds) closes shells that were idle for 30 minutes or are older than 12 hours, even when nobody opens the Terminal page, and closes the shells of a person who was deleted, disabled or is no longer a super admin, or all of them when the Terminal is switched off.
+
 ## Files: browse and edit the server in the browser
 
 [Files](#/files) shows the server's folders. Click a folder to open it and a file to preview or edit it. **New file** and **New folder** create them; **Rename** and the bin icon change or delete them (a folder with files in it asks a second time and you type its name). Text files up to 2 MB open in an editor: **Ctrl+S** (Cmd+S on a Mac) saves, a badge shows unsaved changes, and you are warned before leaving with unsaved work. Saves are atomic (a temporary file replaces the old one, keeping its owner and permissions), and if the file changed on the server after you opened it you are asked before anything is overwritten. Images are previewed; other files can be downloaded (up to 25 MB).
 
 Admins reach `/var/www`, `/srv` and `/home`. Super admins also reach `/etc`, `/opt`, `/root`, and (read-only) `/var/log` and `/var/backups`. Symbolic links are followed only when they stay inside those folders. Files that hold secrets (shadow and sudoers files, SSH host keys and private keys, this app's own data and settings) are never shown or changed. Every create, save, rename and delete is in the Activity log (the path only, never the contents). People limited to some sites cannot use Files.
+
+**Protected folders.** A folder that is not safe to delete or rename shows a lock and "Protected" instead of the buttons (hover for the reason): the folder of a live site (delete the site from the Sites page instead), a live site's `current` and `releases`, an account's home folder, the folders directly inside `/etc`, and any folder a running program is working in. The server checks this again on every request, so it cannot be bypassed.
+
+## Using Shiplane from an AI (MCP)
+
+`mcp/shiplane_mcp.py` is a Model Context Protocol server: it lets Claude (Claude Code, Claude Desktop) or any MCP client manage this Shiplane in plain language: "why is blog.example.com down?", "deploy ./dist to staging", "back up the databases and tell me the result", "clean up the demo site completely". It is a thin client of the same API as the web app (Python standard library only, nothing to install), so it can do exactly what the API key you give it can do.
+
+1. In [Settings, API keys](#/settings?tab=api) create a key. Use **viewer** for an AI that may only look, **admin** for one that may change things. Admin keys cannot reach the super-admin-only screens (users, DNS hosting, mail install...) and never the Terminal: those stay in the browser.
+2. Put `SHIPLANE_URL=https://shiplane.example.com` (or your Tailscale address) and `SHIPLANE_KEY=crk_...` in an env file: a `.env` in the folder you start Claude from, `scripts/.env` in this repository (the one `shiplane-deploy.py` reads too), or `~/.shiplane.env` (all git-ignored), or any file named by `SHIPLANE_ENV_FILE`. Real environment variables win over the file. The key is never taken from a command line.
+3. Register it with Claude Code: from this folder it is already declared in `.mcp.json` (Claude asks you to approve it once), or for every project: `claude mcp add --scope user shiplane -- python /full/path/to/mcp/shiplane_mcp.py`. For Claude Desktop add `{"mcpServers": {"shiplane": {"command": "python", "args": ["/full/path/to/mcp/shiplane_mcp.py"], "env": {"SHIPLANE_URL": "...", "SHIPLANE_KEY": "..."}}}}` to its config file.
+
+About 100 tools cover the status, logs, metrics, sites (start, stop, restart, rollback, environment, rename, delete), deploys (a local folder, or from Git), databases and backups, services, cron, server care, domains and DNS, firewall, mail, files, apps and migration. `shiplane_api` calls any other route (list them with `shiplane_routes`). Anything that deletes needs an explicit `confirm` (for a site, its exact name); "delete everything" also removes the databases, backups and Git connection. Set `SHIPLANE_MCP_READONLY=1` to hide every tool that changes something. Long jobs (deploy, backup, upgrade) are followed to the end and their log is returned. Every action an AI takes appears in [Activity](#/activity) like any other API call.
+
+## Reaching the server over Tailscale
+
+`scripts/setup_tailscale.sh` puts the server on your [Tailscale](https://tailscale.com) network so your own computers open Shiplane directly at `https://<server>.<tailnet>.ts.net`, without exposing it publicly. In the Tailscale admin console turn on MagicDNS and HTTPS Certificates first. Then, on the server: `sudo ./setup_tailscale.sh` (it prints a link to approve the machine) or `sudo TS_AUTHKEY=tskey-auth-... ./setup_tailscale.sh` to do it unattended. The script installs Tailscale from its official apt repository, serves `127.0.0.1:8765` on the tailnet, and adds the tailnet name to the allowed hostnames while keeping your existing ones. `--status` shows the state; `--remove` undoes the serving and the hostname.
+
+## Cleaning temporary storage every day
+
+`scripts/shiplane-tmp-cleanup.sh` removes files in `/tmp` and `/var/tmp` that nobody has read or changed for 3 days (and the empty folders left behind). It skips sockets, systemd, tmux and SSH-agent folders and anything a running program has open. Copy it to the server and run `sudo ./shiplane-tmp-cleanup.sh --install` to run it every day at 03:30; `--dry-run` lists what would go, `DAYS=7` is gentler, `--uninstall` removes it. Each run adds a line to `/var/log/shiplane-tmp-cleanup.log`.
 
 ## Migrate: upload a Plesk or cPanel backup from your computer
 

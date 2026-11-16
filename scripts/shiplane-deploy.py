@@ -21,6 +21,8 @@ import urllib.error
 import urllib.request
 import zipfile
 
+
+
 FIELDS = ('type', 'hostname', 'port', 'dll', 'start', 'build', 'cport', 'dockerfile', 'postgresDb', 'redirectFrom', 'healthPath', 'healthStatus', 'runtime')
 
 
@@ -32,6 +34,8 @@ def load_dotenv(path='.env'):
             line = line.strip()
             if not line or line.startswith('#'):
                 continue
+            if line.startswith('export '):
+                line = line[7:].lstrip()
             if '=' not in line:
                 raise ValueError('%s:%d: expected NAME=VALUE' % (path, line_number))
             name, value = (part.strip() for part in line.split('=', 1))

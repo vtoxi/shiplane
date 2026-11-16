@@ -14,6 +14,7 @@ from .runner import run, script
 ADMIN_ROOTS = ('/var/www', '/srv', '/home')
 SUPER_ROOTS = ADMIN_ROOTS + ('/etc', '/opt', '/root', '/var/log', '/var/backups')
 READ_ONLY = ('/var/log', '/var/backups')
+GUARDS = {}                                   # test hook: where the sites, homes and settings live (defaults: /srv, /home, /etc)
 MAX_EDIT = 2 * 1024 * 1024
 MAX_DOWNLOAD = 25 * 1024 * 1024
 
@@ -39,7 +40,7 @@ def clean_name(name):
 
 def _op(cfg, role, action, **fields):
     top = [r for r in roots_for(role)]
-    req = dict(fields, action=action, roots=top, read_only=[r for r in READ_ONLY if r in top])
+    req = dict(GUARDS, **dict(fields, action=action, roots=top, read_only=[r for r in READ_ONLY if r in top]))
     text = script('files_op.py').replace('__REQ__', repr(json.dumps(req)))
     rc, out = run(cfg, 'sudo python3 -', inp=text.encode(), timeout=90)
     if '{' not in out:

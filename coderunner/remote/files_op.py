@@ -8,6 +8,7 @@ READ_ONLY = [os.path.realpath(r) for r in REQ.get('read_only', [])]
 DENY = ['/etc/shadow*', '/etc/gshadow*', '/etc/sudoers*', '/etc/ssh/ssh_host_*', '/etc/ssl/private*', '/etc/coderunner.env', '/etc/shiplane*', '/var/lib/coderunner*', '/opt/coderunner*',
         '/root/.ssh*', '/home/*/.ssh/id_*', '/home/*/.ssh/*_key', '/home/*/.aws*', '/home/*/.gnupg*', '*/.git/config.lock', '/etc/letsencrypt/archive*', '/etc/letsencrypt/live*']
 MAX_LIST = 3000
+SRV, HOME_ROOT, ETC, META = (REQ.get(k, d) for k, d in (('srv', '/srv'), ('home', '/home'), ('etc', '/etc'), ('meta', '/etc/deploy-meta')))
 
 
 def out(obj, code=0):
@@ -66,11 +67,54 @@ def owner_of(path):
     return st.st_uid, st.st_gid
 
 
+def cwds():
+    """Folders that running processes are working in (services started with WorkingDirectory=...)."""
+    found = set()
+    me = str(os.getpid())
+    for pid in os.listdir('/proc') if os.path.isdir('/proc') else []:
+        if pid.isdigit() and pid != me:
+            try:
+                found.add(os.readlink('/proc/%s/cwd' % pid))
+            except OSError:
+                pass
+    return found
+
+
+def live_site(name):
+    return any(os.path.exists(f % name) for f in (META + '/%s.json', '/etc/systemd/system/%s.service', '/etc/caddy/sites/%s.caddy'))
+
+
+def lock_reason(real, busy):
+    """Why a folder must not be deleted or renamed here ('' when it is safe). The same answer marks the folder in the list."""
+    real = os.path.realpath(real)
+    parent, name = os.path.split(real)
+    if parent == os.path.realpath(SRV) and live_site(name):
+        return 'This is the live site "%s". Delete it from the Sites page instead.' % name
+    gp, site = os.path.split(parent)
+    if gp == os.path.realpath(SRV) and name in ('current', 'releases') and live_site(site):
+        return 'Part of the live site "%s": its releases and the live version are managed by deploys.' % site
+    if parent == os.path.realpath(HOME_ROOT):
+        try:
+            import pwd
+            for u in pwd.getpwall():
+                if os.path.realpath(u.pw_dir) == real:
+                    return 'The home folder of the account "%s".' % u.pw_name
+        except Exception:
+            pass
+    if parent == os.path.realpath(ETC):
+        return 'A system settings folder: other software needs it.'
+    for c in busy:
+        if inside(c, real):
+            return 'A running program is working in this folder.'
+    return ''
+
+
 def act_ls():
     real = resolve(REQ['path'])
     if not os.path.isdir(real):
         fail('Not a folder')
     entries, truncated = [], False
+    busy = cwds()
     with os.scandir(real) as it:
         for i, e in enumerate(sorted(it, key=lambda e: (not e.is_dir(follow_symlinks=False), e.name.lower()))):
             if i >= MAX_LIST:
@@ -78,6 +122,10 @@ def act_ls():
                 break
             x = entry(real, e.name)
             if x:
+                if x['type'] == 'dir' and not x.get('link'):
+                    why = lock_reason(os.path.join(real, e.name), busy)
+                    if why:
+                        x['lock'] = why
                 entries.append(x)
     out({'path': REQ['path'], 'real': real, 'entries': entries, 'truncated': truncated, 'writable': os.access(real, os.W_OK) and not any(inside(real, r) for r in READ_ONLY)})
 
@@ -178,6 +226,10 @@ def act_rename():
         fail('That folder cannot be renamed')
     if os.path.lexists(dst):
         fail('That name already exists')
+    if os.path.isdir(src) and not os.path.islink(src):
+        why = lock_reason(src, cwds())
+        if why:
+            fail('This folder cannot be renamed: ' + why)
     if os.path.isdir(src) and inside(dst, src):
         fail('A folder cannot be moved into itself')
     if not os.path.isdir(os.path.dirname(dst)):
@@ -204,6 +256,9 @@ def act_delete():
             fail('The folder is not empty')
         if os.path.ismount(target):
             fail('That is a mount point')
+        why = lock_reason(target, cwds())
+        if why:
+            fail('This folder cannot be deleted: ' + why)
         shutil.rmtree(target)
     out({'ok': True})
 
