@@ -186,6 +186,24 @@ def test_every_tool_points_at_a_real_route():
         assert role != 'super_admin', (t['name'], 'needs a super admin: API keys can never call it')
 
 
+def test_settings_can_come_from_an_env_file():
+    d = tempfile.mkdtemp()
+    f = os.path.join(d, 'shiplane.env')
+    open(f, 'w').write('# comment\nexport SHIPLANE_URL="%s"\nSHIPLANE_KEY=%s  # inline\nOTHER_SECRET=nope\n' % (URL, KEY))
+    base = {k: v for k, v in os.environ.items() if not k.startswith('SHIPLANE_')}
+    msgs = '\n'.join(json.dumps(m) for m in ({'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}}, {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {'name': 'shiplane_status', 'arguments': {}}})) + '\n'
+
+    def ask(env, cwd=None):
+        p = subprocess.run([sys.executable, SCRIPT], input=msgs, capture_output=True, text=True, env=dict(base, **env), cwd=cwd, timeout=30)
+        assert KEY not in p.stdout + p.stderr
+        return json.loads(p.stdout.splitlines()[-1])['result']
+    assert not ask({'SHIPLANE_ENV_FILE': f})['isError']                                # explicit file
+    open(os.path.join(d, '.env'), 'w').write('SHIPLANE_URL=%s\nSHIPLANE_KEY=%s\n' % (URL, KEY))
+    assert not ask({}, cwd=d)['isError']                                               # ./.env of the folder Claude was started in
+    assert 'HTTP 401' in ask({'SHIPLANE_KEY': 'wrong'}, cwd=d)['content'][0]['text']   # the real environment wins over the file
+    assert ask({}, cwd=tempfile.mkdtemp())['isError']                                  # no file, no settings: a clear error, not a crash
+
+
 def test_bad_input_does_not_kill_the_server():
     p = subprocess.run([sys.executable, SCRIPT], input='not json\n[1]\n{"jsonrpc":"2.0","id":9,"method":"ping"}\n', capture_output=True, text=True, timeout=30)
     lines = [json.loads(l) for l in p.stdout.splitlines()]

@@ -2,11 +2,7 @@
   "mcpServers": {
     "shiplane": {
       "command": "python",
-      "args": ["mcp/shiplane_mcp.py"],
-      "env": {
-        "SHIPLANE_URL": "${SHIPLANE_URL}",
-        "SHIPLANE_KEY": "${SHIPLANE_KEY}"
-      }
+      "args": ["mcp/shiplane_mcp.py"]
     }
   }
 }
