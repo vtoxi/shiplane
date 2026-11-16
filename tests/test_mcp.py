@@ -174,10 +174,7 @@ def test_every_tool_points_at_a_real_route():
     """Drift guard: a renamed or removed Shiplane route must fail here, not silently in front of the AI."""
     sys.path.insert(0, ROOT)
     from coderunner import server
-    import importlib.util
-    spec = importlib.util.spec_from_file_location('shiplane_mcp', SCRIPT)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    from coderunner import mcp_core as mod
     real = set(server.ROUTES)
     bad = [(t['name'], t['method'], t['path']) for t in mod.TOOLS if (t['method'], t['path']) not in real]
     assert not bad, bad

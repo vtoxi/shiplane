@@ -25,7 +25,7 @@ import traceback
 import time
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, activity, backupupload, domaincheck, files, mail, terminal, alerts, apikeys, appaddress, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, fleet, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
+from . import __version__, mcp_core, activity, backupupload, domaincheck, files, mail, terminal, alerts, apikeys, appaddress, apps, care, caredetail, gitdeploy, gitproviders, heal, mailtpl, metricslog, perf, watch, auth, backups, billing, cloudflare, config, dbengines, dnsproviders, wildcard, dbops, deploy, dns, emailcheck, firewall, fleet, sso, statuspage, maintenance, migrate, migrator, monitor, serverops, settings, uploads
 from .runner import explain_ssh as runner_explain, popen, q, run, who
 
 # CODERUNNER_TOKEN pins the launch token (token mode); otherwise a fresh one per launch.
@@ -915,6 +915,29 @@ def api_files_delete(qs, body):
     out = files.delete(cfg(), _file_role(), body.get('path'), bool(body.get('recursive')))
     audit('file-delete', str(body.get('path', ''))[:200], 'folder and everything in it' if body.get('recursive') else '')
     return out
+
+
+# ------------------------------------------------------------------------- hosted MCP
+def mcp_enabled():
+    return bool(settings.get('mcp').get('enabled', False))
+
+
+@route('GET', '/api/mcp', role='admin')
+def api_mcp(qs, body):
+    """Is the hosted MCP endpoint (POST /mcp) switched on. Off until a super admin turns it on."""
+    return {'enabled': mcp_enabled(), 'tools': len(list(mcp_core.listing())), 'path': '/mcp'}
+
+
+@route('POST', '/api/mcp', role='super_admin')
+def api_mcp_set(qs, body):
+    browser_only()
+    on = bool(body.get('enabled'))
+    settings.put('mcp', {'enabled': on})
+    audit('mcp-settings', 'on' if on else 'off')
+    return {'enabled': on}
+
+
+MCP_SLOTS = threading.BoundedSemaphore(2)          # the endpoint calls this same server: never let it hold every request slot
 
 
 # --------------------------------------------------------------------- terminal
@@ -1872,6 +1895,41 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except ValueError as e:
             self.reply({'error': str(e)}, 400)
 
+    def mcp_post(self):
+        """The hosted MCP endpoint (Streamable HTTP, JSON replies). Only an API key signs in here: no cookie, no browser page can use it.
+        Each tool call is an ordinary API request made with the caller's own key, so roles, key scopes and the Activity log apply unchanged."""
+        if not mcp_enabled():
+            return self.reply({'error': 'not found'}, 404)
+        origin = self.headers.get('Origin')
+        if origin and urlparse(origin).netloc.split(':')[0].lower() not in STATE['allowed_hosts'] + ['127.0.0.1', 'localhost']:
+            return self.reply({'error': 'origin not allowed'}, 403)
+        authz = self.headers.get('Authorization', '')
+        if not (ctx.via_key and ctx.user and authz.startswith('Bearer ')):
+            return self.reply({'error': 'An API key is required: Authorization: Bearer crk_...'}, 401, headers=[('WWW-Authenticate', 'Bearer realm="shiplane"')])
+        if getattr(ctx, 'key_scope', '') == 'deploy':
+            return self.reply({'error': 'A deploy-only key cannot use MCP. Create an admin or read-only key.'}, 403)
+        try:
+            length = int(self.headers.get('Content-Length', 0) or 0)
+        except ValueError:
+            length = -1
+        if not 0 < length <= MAX_JSON:
+            return self.reply({'error': 'request too large or empty'}, 413 if length > 0 else 400)
+        try:
+            msg = json.loads(self.rfile.read(length))
+        except ValueError:
+            return self.reply({'jsonrpc': '2.0', 'id': None, 'error': {'code': -32700, 'message': 'parse error'}}, 400)
+        if not isinstance(msg, dict):
+            return self.reply({'jsonrpc': '2.0', 'id': None, 'error': {'code': -32600, 'message': 'send one JSON-RPC message per request'}}, 400)
+        if not MCP_SLOTS.acquire(timeout=2):
+            return self.reply({'error': 'busy: too many MCP calls at once, try again'}, 503, headers=[('Retry-After', '2')])
+        try:
+            out = mcp_core.handle_remote(msg, 'http://127.0.0.1:%d' % STATE['port'], authz[7:].strip(), readonly=getattr(ctx, 'key_scope', '') == 'viewer')
+        finally:
+            MCP_SLOTS.release()
+        if out is None:
+            return self.reply(b'', 202, 'application/json')
+        return self.reply(out)
+
     def stream_terminal(self, qs):
         """Server-Sent Events: the screen output of one terminal session, from byte offset `since`. Only its owner, a super admin signed in with a browser."""
         if not ctx.user:
@@ -1977,6 +2035,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply('bad host', 403, 'text/plain')
         self.identify()
         login_mode = STATE['auth'] == 'login'
+        if u.path == '/mcp':
+            return self.reply({'error': 'POST only'} if mcp_enabled() else {'error': 'not found'}, 405 if mcp_enabled() else 404, headers=[('Allow', 'POST')] if mcp_enabled() else [])
         if u.path == '/' and not login_mode and hmac.compare_digest(qs.get('t', [''])[0], STATE['token']):
             ctx.cookies.append('cr=%s; HttpOnly; SameSite=Lax; Path=/' % STATE['token'])
             return self.reply('', 302, 'text/plain', [('Location', '/')])
@@ -2014,6 +2074,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not self.host_ok():
             return self.reply({'error': 'not authorised'}, 403)
         self.identify()
+        if u.path == '/mcp':
+            return self.mcp_post()
         webhook = u.path == '/api/hooks/git'          # called by GitHub/GitLab, which cannot send our header: it is protected by its signature instead
         if not webhook and not ctx.via_key and self.headers.get('X-Requested-With') != 'coderunner':
             return self.reply({'error': 'not authorised'}, 403)

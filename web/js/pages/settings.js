@@ -103,6 +103,28 @@ export function SettingsPage({ view = 'settings' } = {}) {
     }).catch((e) => box.replaceChildren(Alert({ tone: 'bad', title: 'Could not read these settings' }, e.message)));
     return Card({ title: 'Server care', subtitle: 'What the server tells you about, and what it fixes by itself. The checklist is on the Server care page.' }, box);
   }
+  function mcpCard() {
+    const box = h('div', {});
+    const url = location.origin + '/mcp';
+    const cmd = `claude mcp add --transport http shiplane ${url} --header "Authorization: Bearer YOUR_API_KEY"`;
+    async function draw() {
+      const r = await api('/api/mcp');
+      const sw = isSuper ? Switch({ label: 'Let AI assistants connect to this server', description: 'Off by default. When on, anyone with a valid API key can use the same actions as in this app through an AI assistant (their key decides what: read-only keys can only look).', checked: r.enabled,
+        onChange: async (v) => { if (await attempt(api('/api/mcp', { enabled: v }), v ? 'AI access is on' : 'AI access is off')) draw(); else sw.set(!v); } }) : null;
+      const how = Console({ lines: [cmd] });
+      fill(box, h('div', { class: 'space-y-4' },
+        sw || Alert({ tone: r.enabled ? 'ok' : 'info', title: r.enabled ? 'AI access is on' : 'AI access is off' }, r.enabled ? 'Use the command below with your own API key.' : 'A super admin can switch it on.'),
+        r.enabled ? h('div', { class: 'space-y-3' },
+          KeyValue([['Address', url], ['Tools', String(r.tools)]]),
+          h('p', { class: 'text-sm text-muted' }, 'Create a key under API keys (read-only to look, admin to change things), then run this once on your computer:'),
+          how.el,
+          h('div', { class: 'flex flex-wrap gap-2' }, Button({ label: 'Copy command', icon: 'copy', onClick: () => { navigator.clipboard && navigator.clipboard.writeText(cmd); toast('Copied', { tone: 'ok', timeout: 1500 }); } })),
+          h('p', { class: 'text-xs text-muted' }, 'Deleting, restoring and similar actions always need an explicit confirmation from the assistant. The Terminal and the super-admin screens are never available this way.')) : null));
+    }
+    draw().catch((e) => fill(box, Alert({ tone: 'bad', title: 'Could not read the AI access setting' }, e.message)));
+    return Card({ title: 'AI access (MCP)', subtitle: 'Connect Claude or another AI assistant to this server with a URL and your API key. Nothing to install.' }, box);
+  }
+
   function perfCard() {
     const box = h('div', {});
     const mb = (v) => (v == null ? 'not available here' : `${v} MB`);
@@ -440,7 +462,7 @@ export function SettingsPage({ view = 'settings' } = {}) {
     { id: 'server', label: 'Server connection', cards: [connectionCard, isSuper && loginMode ? appAddressCard() : null] },
     { id: 'monitoring', label: 'Monitoring', cards: [carePrefsCard(), isSuper ? uptimeCard() : null] },
     { id: 'performance', label: 'Performance', cards: [perfCard()] },
-    { id: 'api', label: 'API keys', cards: [apiKeysCard] },
+    { id: 'api', label: 'API keys and AI', cards: [apiKeysCard, mcpCard()] },
     { id: 'about', label: 'Appearance and about', cards: [Card({ title: 'Appearance' }, theme), aboutCard] },
   ]).map((g) => Object.assign(g, { cards: g.cards.filter(Boolean) })).filter((g) => g.cards.length);
   let active = (location.hash.match(/[?&]tab=(\w+)/) || [])[1];
