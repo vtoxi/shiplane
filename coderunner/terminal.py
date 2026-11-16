@@ -37,7 +37,10 @@ MAX_SECONDS = 12 * 3600
 HISTORY = 256 * 1024                     # what a reattaching browser gets back
 SHELLS = {'root': 'A root shell (sudo -i)', 'app': "The app's own account"}
 SESSIONS = {}
+REAP_EVERY = 30                          # seconds between sweeps of the background reaper
+OWNER_OK = None                          # set by the server: owner -> bool. A shell whose owner stopped being an active super admin is closed
 _lock = threading.Lock()
+_reaper = None
 
 
 def enabled():
@@ -156,6 +159,28 @@ def _reap(now=None):
             SESSIONS.pop(sid, None)
         elif not s.closed and (now - s.last_input > IDLE_SECONDS or now - s.created > MAX_SECONDS):
             s.close('closed after %d idle minutes' % (IDLE_SECONDS // 60) if now - s.last_input > IDLE_SECONDS else 'session time limit reached')
+        elif not s.closed and OWNER_OK is not None and not OWNER_OK(s.owner):
+            s.close('its owner is no longer a super admin')
+        elif not s.closed and not enabled():
+            s.close('terminal switched off')
+
+
+def _ensure_reaper():
+    """The limits must hold when nobody is looking: a forgotten root shell is closed by this sweep, not only the next time someone opens the Terminal page."""
+    global _reaper
+    if _reaper and _reaper.is_alive():
+        return
+
+    def loop():
+        while True:
+            time.sleep(REAP_EVERY)
+            try:
+                with _lock:
+                    _reap()
+            except Exception:
+                pass
+    _reaper = threading.Thread(target=loop, daemon=True, name='terminal-reaper')
+    _reaper.start()
 
 
 def open_session(cfg, owner, shell='root', rows=24, cols=80):
@@ -171,6 +196,7 @@ def open_session(cfg, owner, shell='root', rows=24, cols=80):
         argv, env = argv_for(cfg, shell)
         sid = secrets.token_hex(16)
         SESSIONS[sid] = Session(sid, owner, shell, argv, env, rows, cols)
+        _ensure_reaper()
     return SESSIONS[sid]
 
 

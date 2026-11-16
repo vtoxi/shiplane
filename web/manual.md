@@ -688,6 +688,8 @@ Screens: **Firewall & email** in the sidebar (Network group) has tabs for the fi
 
 It is a real root shell, so treat access to it like the root password. Only super admins signed in with a browser can use it (not API keys, not other super admins' sessions). What you type is never stored; the Activity log records only that a terminal was opened, by whom, as which shell, and for how long. **Switch the terminal off** (link under it) closes all terminals and blocks new ones until a super admin switches it on again; it can also be left off. The terminal needs the app to run on Linux or macOS (on Windows, use SSH from your own terminal).
 
+A background sweep (every 30 seconds) closes shells that were idle for 30 minutes or are older than 12 hours, even when nobody opens the Terminal page, and closes the shells of a person who was deleted, disabled or is no longer a super admin, or all of them when the Terminal is switched off.
+
 ## Files: browse and edit the server in the browser
 
 [Files](#/files) shows the server's folders. Click a folder to open it and a file to preview or edit it. **New file** and **New folder** create them; **Rename** and the bin icon change or delete them (a folder with files in it asks a second time and you type its name). Text files up to 2 MB open in an editor: **Ctrl+S** (Cmd+S on a Mac) saves, a badge shows unsaved changes, and you are warned before leaving with unsaved work. Saves are atomic (a temporary file replaces the old one, keeping its owner and permissions), and if the file changed on the server after you opened it you are asked before anything is overwritten. Images are previewed; other files can be downloaded (up to 25 MB).

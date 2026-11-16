@@ -922,6 +922,19 @@ def _term_owner():
     return me()['email'] or who(cfg())
 
 
+def _terminal_owner_ok(owner):
+    """A terminal is closed by the periodic sweep once its owner is deleted, disabled or no longer a super admin."""
+    if STATE['auth'] != 'login':
+        return True
+    try:
+        return any(u['email'] == owner and u['role'] == 'super_admin' and u.get('status', 'active') == 'active' for u in auth.list_users())
+    except Exception:
+        return True                  # a database hiccup must not kill someone's shell
+
+
+terminal.OWNER_OK = _terminal_owner_ok
+
+
 @route('GET', '/api/terminal', role='super_admin')
 def api_terminal(qs, body):
     browser_only()

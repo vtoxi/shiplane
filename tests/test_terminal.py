@@ -173,6 +173,32 @@ def test_idle_and_age_limits_and_the_off_switch():
     cleanup()
 
 
+def test_the_background_sweep_enforces_the_limits_and_the_owner():
+    """The idle limit must hold even when nobody opens the Terminal page again, and a shell must not outlive its owner's rights."""
+    cleanup()
+    s = new('app', owner='sweep@example.com')
+    assert terminal._reaper and terminal._reaper.is_alive()
+    first = terminal._reaper
+    new('app', owner='other@example.com')
+    assert terminal._reaper is first                                          # one reaper, not one per session
+    old = terminal.OWNER_OK
+    terminal.OWNER_OK = lambda owner: owner != 'sweep@example.com'            # the owner was demoted / deleted
+    try:
+        terminal._reap()
+        assert s.closed and 'no longer a super admin' in s.reason
+        assert not [x for x in terminal.SESSIONS.values() if x.owner == 'other@example.com'][0].closed
+    finally:
+        terminal.OWNER_OK = old
+    t = [x for x in terminal.SESSIONS.values() if x.owner == 'other@example.com'][0]
+    terminal.settings.put('terminal', {'enabled': False})                     # switched off by another route: every open shell goes
+    try:
+        terminal._reap()
+        assert t.closed and 'switched off' in t.reason
+    finally:
+        terminal.settings.put('terminal', {'enabled': True})
+    cleanup()
+
+
 def test_how_the_shell_is_started():
     argv, env = terminal.argv_for(LOCAL, 'root')
     assert argv == ['sudo', '-i'] and env['TERM'] == 'xterm-256color'
