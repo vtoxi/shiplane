@@ -528,7 +528,7 @@ An API key has the **admin** role. Errors come back as JSON `{"error": "..."}` w
 | `GET/POST /api/alerts`, `POST /api/alerts/test`, `GET/POST /api/backups/schedule`, `POST /api/backups/run`, `POST /api/databases/restore`, `POST /api/policy` | Alerts, backup schedule and restore, security policy |
 | `POST /api/auth/login-2fa`, `/api/auth/2fa/start`, `/2fa/enable`, `/2fa/disable` | Two-factor sign-in (account sessions only, not API keys) |
 | `GET /api/mcp`, `POST /api/mcp` | Is the hosted AI (MCP) endpoint on; switch it on or off (super admin, browser only) |
-| `POST /mcp` | The hosted MCP endpoint (JSON-RPC over HTTP). Needs `Authorization: Bearer crk_...`; off until switched on (see *Using Shiplane from an AI*) |
+| `POST /mcp` | The hosted MCP endpoint (JSON-RPC over HTTP). Needs `Authorization: Bearer crk_...`; off until switched on (see *Using Shiplane from an AI*). `?mode=code` serves Code Mode |
 | `GET /api/routes` | This list, generated |
 
 ## Deploy from the command line or CI
@@ -718,6 +718,8 @@ Create the key under API keys: **read-only** to let an assistant look but not ch
 **From your own computer (stdio).** `mcp/shiplane_mcp.py` is the same server as a local program (it needs a copy of this repository): put `SHIPLANE_URL=https://<your-shiplane>` and `SHIPLANE_KEY=crk_...` in `scripts/.env`, a `.env` in the folder you start Claude from, or `~/.shiplane.env`, then `claude mcp add --scope user shiplane -- python /full/path/to/mcp/shiplane_mcp.py` (inside this repository the shipped `.mcp.json` already declares it; Claude asks you to approve it once). It adds one tool the hosted version cannot have: deploying a folder from your own computer.
 
 About 100 tools cover the status, logs, metrics, sites (start, stop, restart, rollback, environment, rename, delete), deploys (from Git, or a local folder with the stdio version), databases and backups, services, cron, server care, domains and DNS, firewall, mail, files, apps and migration. `shiplane_api` calls any other route (list them with `shiplane_routes`). Anything that deletes needs an explicit `confirm` (for a site, its exact name); "delete everything" also removes the databases, backups and Git connection. Long jobs (deploy, backup, upgrade) are followed to the end, or for up to 25 seconds on the hosted version, which then returns the job to follow with `shiplane_job`. `SHIPLANE_MCP_READONLY=1` hides every tool that changes something in the local version; for the hosted one, use a read-only key.
+
+**Code Mode (fewer tokens).** Add `?mode=code` to the hosted address (`https://<your-shiplane>/mcp?mode=code`), or set `SHIPLANE_MCP_MODE=code` for the local version, and the AI gets two tools instead of about 100: `shiplane_search` finds the tools it needs, and `shiplane_execute` runs a few lines of Python that call them, chain them and filter the answers, so only the final result comes back. The tool list shrinks from about 39 KB to under 2 KB, and multi-step questions ("which sites are down, and what do their last log lines say?") take one call instead of many. The snippets run in Shiplane's own small interpreter for a safe subset of Python (no imports, files or network; step, size, time and 50-call limits), and every call inside a snippet is the same tool call with the same key, roles, `confirm` rules and Activity log as before.
 
 ## Reaching the server over Tailscale
 

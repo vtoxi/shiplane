@@ -32,8 +32,8 @@ def rpc(method, params=None, key=ADMIN, mid=1, extra=None, cookie=False, path='/
     return s, h, (json.loads(b) if b else None)
 
 
-def tool(name, args=None, key=ADMIN):
-    s, _, out = rpc('tools/call', {'name': name, 'arguments': args or {}}, key)
+def tool(name, args=None, key=ADMIN, path='/mcp'):
+    s, _, out = rpc('tools/call', {'name': name, 'arguments': args or {}}, key, path=path)
     assert s == 200, (s, out)
     return out['result']['isError'], out['result']['content'][0]['text']
 
@@ -130,6 +130,36 @@ def test_it_cannot_starve_the_server_of_request_slots():
     switch(True)
     try:
         assert rpc('ping')[0] == 200
+    finally:
+        switch(False)
+
+
+def test_code_mode_two_tools_same_rules():
+    switch(True)
+    try:
+        cm = '/mcp?mode=code'
+        tools = rpc('tools/list', path=cm)[2]['result']['tools']
+        assert [t['name'] for t in tools] == ['shiplane_search', 'shiplane_execute']
+        assert 'Code Mode' in rpc('initialize', path=cm)[2]['result']['instructions']
+        err, text = tool('shiplane_search', {'code': '[t["name"] for t in tools if "delete" in t["name"]]'}, path=cm)
+        assert not err and 'shiplane_site_delete' in text and 'shiplane_deploy_folder' not in tool('shiplane_search', {'code': '[t["name"] for t in tools]'}, path=cm)[1]
+        err, text = tool('shiplane_execute', {'code': 'r = routes()\n"/api/status" in str(r)'}, path=cm)
+        assert not err and text == 'true', text                                       # a real call through the normal API, as this key
+        err, text = tool('shiplane_execute', {'code': 'api("GET", "/api/users")'}, path=cm)
+        assert err and 'HTTP 403' in text                                              # super-admin routes stay out of reach
+        err, text = tool('shiplane_execute', {'code': 'tool("shiplane_database_drop", name="x")'}, path=cm)
+        assert err and 'confirm' in text
+        err, text = tool('shiplane_execute', {'code': 'tool("shiplane_deploy_folder", folder="/etc", site="x")'}, path=cm)
+        assert err and 'unknown tool' in text
+        err, text = tool('shiplane_execute', {'code': 'open("/etc/passwd")'}, path=cm)
+        assert err and 'NameError' in text
+        tools = rpc('tools/list', key=VIEWER, path=cm)[2]['result']['tools']
+        assert all(t['annotations']['readOnlyHint'] for t in tools)
+        err, text = tool('shiplane_execute', {'code': 'tool("shiplane_site_restart", name="x")'}, key=VIEWER, path=cm)
+        assert err and 'unknown tool' in text                                          # read-only keys stay read-only inside snippets
+        err, text = tool('shiplane_execute', {'code': 'api("POST", "/api/action", body={})'}, key=VIEWER, path=cm)
+        assert err and 'unknown tool' in text
+        assert [t['name'] for t in rpc('tools/list', mid=2)[2]['result']['tools']][0] == 'shiplane_status'      # plain /mcp is unchanged
     finally:
         switch(False)
 

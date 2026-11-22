@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+* **MCP Code Mode**: `/mcp?mode=code` (or `SHIPLANE_MCP_MODE=code` locally) offers two tools, `shiplane_search` and `shiplane_execute`, instead of about 100. The AI writes a short snippet in a safe Python subset that calls the tools and returns only what it needs; the tool list drops from ~39 KB to under 2 KB. Same keys, roles, confirmations and Activity log.
 * **Test restore** for Postgres backups (on demand, and optionally after every nightly backup): the backup is loaded into a scratch database and dropped again; a failure raises an alert.
 
 * **Firewall & email** page (firewall rules, email check, status page) and the matching with a lock-out guard, command previews and typed confirmation to switch it on/off.

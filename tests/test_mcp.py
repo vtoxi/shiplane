@@ -214,5 +214,38 @@ def test_bad_input_does_not_kill_the_server():
     assert lines[0]['error']['code'] == -32700 and lines[-1] == {'jsonrpc': '2.0', 'id': 9, 'result': {}}
 
 
+def test_code_mode():
+    code = {'SHIPLANE_MCP_MODE': 'code'}
+    r = session([{'method': 'tools/list'}], code)
+    assert [t['name'] for t in r[1]['result']['tools']] == ['shiplane_search', 'shiplane_execute'] and 'Code Mode' in r[0]['result']['instructions']
+    err, text = call('shiplane_search', {'code': '[t for t in tools if t["name"] == "shiplane_site_delete"]'}, code)
+    spec = json.loads(text)[0]
+    assert not err and spec['kind'] == 'destructive' and spec['params']['confirm']['required'] and spec['path'] == '/api/action'
+    assert 'shiplane_deploy_folder' in call('shiplane_search', {'code': '[t["name"] for t in tools]'}, code)[1]       # local tools exist in stdio
+    del SEEN[:]
+    err, text = call('shiplane_execute', {'code': 'sites = tool("shiplane_status")["sites"]\nprint(len(sites))\n[s["name"] for s in sites]'}, code)
+    assert not err and json.loads(text) == {'printed': '1\n', 'result': ['blog']}, text
+    err, text = call('shiplane_execute', {'code': 'print("only")'}, code)
+    assert not err and text == 'only\n'
+    err, text = call('shiplane_execute', {'code': 'x = {1}\nx'}, code)
+    assert not err and json.loads(text) == [1]
+    err, text = call('shiplane_execute', {'code': 'tool("shiplane_site_delete", {"name": "blog", "confirm": "blog"})["text"]'}, code)
+    assert not err and text == 'deleted'                                        # a string result comes back as plain text
+    err, text = call('shiplane_execute', {'code': 'try:\n    tool("shiplane_database_drop", name="x")\nexcept Exception as e:\n    result = "caught: " + e'}, code)
+    assert not err and 'caught' in text and 'confirm' in text
+    err, text = call('shiplane_execute', {'code': 'api("GET", "/api/files/list", query={"path": "/srv"})'}, code)
+    assert not err and json.loads(text) == {'entries': []}
+    err, text = call('shiplane_execute', {'code': 'tool("shiplane_execute", code="1")'}, code)
+    assert err and 'not the Code Mode tools' in text
+    err, text = call('shiplane_execute', {'code': 'for i in range(60):\n    tool("shiplane_status")'}, code)
+    assert err and 'more than 50 API calls' in text
+    err, text = call('shiplane_execute', {'code': 'import os'}, code)
+    assert err and 'not supported' in text
+    err, text = call('shiplane_execute', {'code': 'x = [routes]\nx'}, code)
+    assert not err and 'function' in text                                       # unserialisable values come back as text, not a crash
+    err, text = call('shiplane_search', {'code': 'len(routes())'}, code)
+    assert err and 'HTTP 404' in text                                           # the fake has no /api/routes; the error reaches the model
+
+
 if __name__ == '__main__':
     run_tests(globals())
