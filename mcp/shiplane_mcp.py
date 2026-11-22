@@ -8,6 +8,7 @@ Settings (environment, or an env file; the real environment wins):
     SHIPLANE_KEY=crk_...                 # Settings > API keys. Never taken from the command line.
     SHIPLANE_ENV_FILE=path               # default lookup: ./.env, scripts/.env of this repository, ~/.shiplane.env
     SHIPLANE_MCP_READONLY=1              # hide every tool that changes something
+    SHIPLANE_MCP_MODE=code               # Code Mode: two tools (shiplane_search, shiplane_execute) instead of ~100
     SHIPLANE_MCP_WAIT=900                # seconds to wait for a deploy/backup/upgrade job before returning its job id
 
 Your Shiplane can also serve the same tools itself at https://<your-shiplane>/mcp (a super admin switches it on in Settings), which needs

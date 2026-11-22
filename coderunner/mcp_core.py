@@ -18,8 +18,10 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-VERSION = '1.2.0'
-CTX = threading.local()          # per request in hosted mode: base, key, remote, wait
+from . import codemode
+
+VERSION = '1.3.0'
+CTX = threading.local()          # per request in hosted mode: base, key, remote, wait, code
 
 
 PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05']
@@ -29,6 +31,11 @@ INSTRUCTIONS = ('Tools to run a Shiplane server: sites, deploys, databases, back
                 'Start with shiplane_status. Tools that start a long job (deploy, backup, upgrade) wait for it and return its log. '
                 'Destructive tools need confirm; for a site delete, confirm must be the exact site name. '
                 'For anything without a dedicated tool use shiplane_routes then shiplane_api.')
+CODE_MODE = os.environ.get('SHIPLANE_MCP_MODE', '').strip().lower() == 'code'
+CODE_INSTRUCTIONS = ('Tools to run a Shiplane server (sites, deploys, databases, backups, DNS, care, mail, firewall, files, Git deploy), in Code Mode: '
+                     'first find the tools you need with shiplane_search, then call them with shiplane_execute in one short snippet that returns only what you need. '
+                     'Start with tool("shiplane_status"). Destructive tools need confirm; for a site delete, confirm must be the exact site name.')
+CODE_CALLS = 50                  # API calls one shiplane_execute run may make
 
 
 class ApiError(Exception):
@@ -302,6 +309,96 @@ COMPOSITE = [
 ]
 
 
+# --------------------------------------------------------------------------- Code Mode (two tools instead of ~100; see codemode.py)
+def code_mode():
+    return CODE_MODE or bool(getattr(CTX, 'code', False))
+
+
+def tool_spec():
+    """Every tool the caller can use, as plain data for the snippets: what shiplane_search searches."""
+    kinds = {'r': 'read', 'w': 'write', 'd': 'destructive'}
+    out = []
+    for t in visible():
+        params = {}
+        for k, p in t['props'].items():
+            params[k] = {'type': p['type'], 'description': p['desc']}
+            if p['req']:
+                params[k]['required'] = True
+            if p['enum']:
+                params[k]['enum'] = p['enum']
+        d = {'name': t['name'], 'kind': kinds[t['kind']], 'description': t['desc'], 'params': params}
+        if 'path' in t:
+            d.update(method=t['method'], path=t['path'])
+        out.append(d)
+    return out
+
+
+def code_seconds():
+    return 60 if remote() else WAIT + 60
+
+
+def code_output(value, printed):
+    if printed and value is None:
+        return printed
+    out = {'printed': printed, 'result': value} if printed else value
+
+    def plain(o):
+        try:
+            return list(o)                       # sets, tuples, ranges, dict views
+        except TypeError:
+            return str(o)
+    return out if isinstance(out, str) else json.dumps(out, indent=1, ensure_ascii=False, default=plain)
+
+
+def run_code(a, funcs):
+    try:
+        return code_output(*codemode.run(a.get('code'), funcs, {'tools': tool_spec()}, code_seconds()))
+    except codemode.CodeError as e:
+        raise ApiError(str(e))
+
+
+def code_search(a):
+    return run_code(a, {'routes': lambda: routes({})})
+
+
+def code_execute(a):
+    calls = [0]
+
+    def counted(fn):
+        def wrapper(*args, **kw):
+            calls[0] += 1
+            if calls[0] > CODE_CALLS:
+                raise codemode.Limit('more than %d API calls in one run: split the work' % CODE_CALLS)
+            return fn(*args, **kw)
+        return wrapper
+
+    def tool_(_name, _args=None, /, **kw):          # positional-only: tool arguments are often called name
+        if _name in CODE_FNS:
+            raise ApiError('call Shiplane tools here, not the Code Mode tools')
+        return run_tool(_name, dict(_args or {}, **kw))
+
+    def api(method, path, query=None, body=None):
+        return run_tool('shiplane_api', {'method': method, 'path': path, 'query': query, 'body': body})   # hidden in read-only mode, like the tool
+    return run_code(a, {'tool': counted(tool_), 'api': counted(api), 'routes': counted(lambda: routes({}))})
+
+
+CODE_PROP = {'code': P('string', 'The Python snippet', True)}
+CODE_TOOLS = [
+    {'name': 'shiplane_search', 'kind': 'r', 'fn': code_search, 'props': CODE_PROP,
+     'desc': 'Find the Shiplane tools you need. `code` is a short Python snippet (a safe subset: no imports) run against `tools`: a list of every tool as '
+             '{name, kind: read|write|destructive, description, params: {name: {type, description, required?, enum?}}, method?, path?}. routes() lists every raw '
+             'API route. The last expression (or a variable named result) is returned; print() works too. '
+             'Example: [(t["name"], t["description"], t["params"]) for t in tools if "backup" in t["name"]]'},
+    {'name': 'shiplane_execute', 'kind': 'w', 'fn': code_execute, 'props': CODE_PROP,
+     'desc': 'Run a short Python snippet (a safe subset: no imports, no files) that calls Shiplane and returns only what you need. '
+             'tool(name, {args}) or tool(name, key=value) calls any tool from shiplane_search, with the same arguments and confirm rules (long jobs are followed and '
+             'return their log); api(method, path, query=None, body=None) calls any /api/ route; tools and routes() as in shiplane_search. Chain calls, loop and '
+             'filter in one run; return the last expression or set result. A failing call raises: catch it with try/except Exception as e (e is the message). '
+             'At most %d API calls per run. Example: [s["name"] for s in tool("shiplane_status")["sites"]]' % CODE_CALLS},
+]
+CODE_FNS = {t['name']: t for t in CODE_TOOLS}
+
+
 def schema(props):
     s = {'type': 'object', 'properties': {}, 'required': []}
     for k, p in props.items():
@@ -329,15 +426,19 @@ def visible():
 
 def listing():
     out = []
-    for t in visible():
+    readonly = READONLY or getattr(CTX, 'readonly', False)
+    for t in (CODE_TOOLS if code_mode() else visible()):
         ann = {'readOnlyHint': t['kind'] == 'r', 'destructiveHint': t['kind'] == 'd', 'openWorldHint': False}
-        if t['name'] == 'shiplane_api':
-            ann['destructiveHint'] = True
+        if t['name'] in ('shiplane_api', 'shiplane_execute'):
+            ann['destructiveHint'] = not readonly
+            ann['readOnlyHint'] = readonly
         out.append({'name': t['name'], 'description': t['desc'], 'inputSchema': schema(t['props']), 'annotations': ann})
     return out
 
 
 def run_tool(name, a):
+    if code_mode() and name in CODE_FNS:
+        return CODE_FNS[name]['fn'](a or {})
     t = next((t for t in visible() if t['name'] == name), None)
     if not t:
         raise ApiError('unknown tool (or hidden by read-only mode): %s' % name)
@@ -375,7 +476,7 @@ def respond(m):
             want = params.get('protocolVersion')
             result = {'protocolVersion': want if want in PROTOCOLS else PROTOCOLS[0], 'capabilities': {'tools': {'listChanged': False}},
                       'serverInfo': {'name': 'shiplane', 'version': VERSION},
-                      'instructions': INSTRUCTIONS + (' READ-ONLY: nothing can be changed.' if READONLY or getattr(CTX, 'readonly', False) else '')}
+                      'instructions': (CODE_INSTRUCTIONS if code_mode() else INSTRUCTIONS) + (' READ-ONLY: nothing can be changed.' if READONLY or getattr(CTX, 'readonly', False) else '')}
         elif method == 'ping':
             result = {}
         elif method == 'tools/list':
@@ -394,13 +495,13 @@ def respond(m):
         return {'jsonrpc': '2.0', 'id': mid, 'error': {'code': -32603, 'message': 'internal error: %s' % e}}
 
 
-def handle_remote(message, base, key, readonly=False, wait=25):
-    """Hosted endpoint: answer one message on behalf of the caller whose API key is `key`, calling the API at `base`."""
-    CTX.base, CTX.key, CTX.remote, CTX.readonly, CTX.wait = base, key, True, readonly, wait
+def handle_remote(message, base, key, readonly=False, wait=25, code=False):
+    """Hosted endpoint: answer one message on behalf of the caller whose API key is `key`, calling the API at `base`. code=True serves Code Mode (/mcp?mode=code)."""
+    CTX.base, CTX.key, CTX.remote, CTX.readonly, CTX.wait, CTX.code = base, key, True, readonly, wait, code
     try:
         return respond(message)
     finally:
-        for k in ('base', 'key', 'remote', 'readonly', 'wait'):
+        for k in ('base', 'key', 'remote', 'readonly', 'wait', 'code'):
             setattr(CTX, k, None)
 
 

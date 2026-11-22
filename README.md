@@ -51,6 +51,7 @@ coderunner/                 backend, standard library only
   monitor.py  billing.py    live logs, 24 h uptime history, Hetzner/Cloudflare cost estimate
   alerts.py  backups.py     Telegram/webhook alerts; nightly backups, retention, restore
   mcp_core.py               the MCP tools for AI assistants (stdio and the hosted POST /mcp endpoint)
+  codemode.py               the safe Python-subset interpreter behind MCP Code Mode (/mcp?mode=code)
   settings.py               small JSON store for those settings (data/settings.json)
   remote/                   the fixed scripts that run on the server
 web/                        frontend, no build step to run it

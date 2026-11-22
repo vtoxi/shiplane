@@ -1923,7 +1923,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not MCP_SLOTS.acquire(timeout=2):
             return self.reply({'error': 'busy: too many MCP calls at once, try again'}, 503, headers=[('Retry-After', '2')])
         try:
-            out = mcp_core.handle_remote(msg, 'http://127.0.0.1:%d' % STATE['port'], authz[7:].strip(), readonly=getattr(ctx, 'key_scope', '') == 'viewer')
+            out = mcp_core.handle_remote(msg, 'http://127.0.0.1:%d' % STATE['port'], authz[7:].strip(), readonly=getattr(ctx, 'key_scope', '') == 'viewer',
+                                         code=parse_qs(urlparse(self.path).query).get('mode', [''])[0] == 'code')
         finally:
             MCP_SLOTS.release()
         if out is None:
