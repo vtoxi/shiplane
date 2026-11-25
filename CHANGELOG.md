@@ -37,6 +37,7 @@
 * **Files: protected folders**: live sites (and their `current`/`releases`), account home folders, folders directly in `/etc` and folders a running program is using show "Protected" and are refused by the server for delete and rename.
 * **MCP for AI assistants**: about 100 tools over the existing API for Claude and other MCP clients. Local stdio server (`mcp/shiplane_mcp.py`, `.mcp.json`; URL and key from the environment or `scripts/.env`) and a **hosted endpoint** `POST /mcp` (off by default, switched on by a super admin in Settings, API-key Bearer only, each call made with the caller's own key). Deletes need `confirm`; read-only keys see read-only tools; the Terminal is never reachable.
 * `scripts/setup_tailscale.sh` (join a tailnet and serve the app over Tailscale HTTPS, adds the tailnet name to the allowed hostnames) and `scripts/shiplane-tmp-cleanup.sh` (daily `/tmp` and `/var/tmp` cleanup, `--install` for cron).
+* `scripts/setup_wireguard.sh`: turn the server into a WireGuard VPN for a phone or laptop (all traffic through the server, IPv4 and IPv6, per-device keys and QR code, `--add`/`--remove`/`--list`, devices isolated from each other).
 
 ### Fixed
 * Direct-HTTPS sites: `https://www.example.com` (and other redirected names) failed with a certificate error because no certificate was requested for them. They now get one and redirect to the main address. Turning Direct HTTPS on or off for a site now covers its redirect blocks too.

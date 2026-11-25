@@ -60,6 +60,7 @@ web/                        frontend, no build step to run it
 frontend/                   design system source (Tailwind 3) - only to change the look
 scripts/install_on_server.py  installs/upgrades the app on the server (systemd + Caddy)
 scripts/setup_tailscale.sh  join the server to a Tailscale network and serve the app there
+scripts/setup_wireguard.sh  turn the server into a WireGuard VPN (QR code for the phone, --add/--remove devices)
 scripts/shiplane-tmp-cleanup.sh  daily /tmp and /var/tmp cleanup on the server (--install for cron)
 mcp/shiplane_mcp.py         local MCP server for Claude (stdio); see the Manual, "Using Shiplane from an AI"
 tests/                      end-to-end and unit checks (fake Cloudflare, real server)

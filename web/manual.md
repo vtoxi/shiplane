@@ -631,6 +631,7 @@ Everyone needs their **own** server user and SSH key, so that actions can be tra
 | `cloudflare.json` | Account and tunnel IDs, and the API token if you have one. |
 | `data/` | The activity log, API key hashes and the accounts database (`users.db`). On the server this is `/var/lib/coderunner`. |
 | `scripts/install_on_server.py` | Installs or upgrades the app on the server. |
+| `scripts/setup_wireguard.sh` | Turns the server into a WireGuard VPN for your phone or laptop (see *Using the server as a VPN*). |
 | `scripts/setup_tailscale.sh` | Puts the server on your Tailscale network and serves the app there (see *Reaching the server over Tailscale*). |
 | `scripts/shiplane-tmp-cleanup.sh` | Daily cleanup of `/tmp` and `/var/tmp` on the server (see *Cleaning temporary storage every day*). |
 | `mcp/shiplane_mcp.py`, `.mcp.json` | The local (stdio) MCP server for Claude; the tools themselves are in `coderunner/mcp_core.py`. |
@@ -718,6 +719,19 @@ Create the key under API keys: **read-only** to let an assistant look but not ch
 **From your own computer (stdio).** `mcp/shiplane_mcp.py` is the same server as a local program (it needs a copy of this repository): put `SHIPLANE_URL=https://<your-shiplane>` and `SHIPLANE_KEY=crk_...` in `scripts/.env`, a `.env` in the folder you start Claude from, or `~/.shiplane.env`, then `claude mcp add --scope user shiplane -- python /full/path/to/mcp/shiplane_mcp.py` (inside this repository the shipped `.mcp.json` already declares it; Claude asks you to approve it once). It adds one tool the hosted version cannot have: deploying a folder from your own computer.
 
 About 100 tools cover the status, logs, metrics, sites (start, stop, restart, rollback, environment, rename, delete), deploys (from Git, or a local folder with the stdio version), databases and backups, services, cron, server care, domains and DNS, firewall, mail, files, apps and migration. `shiplane_api` calls any other route (list them with `shiplane_routes`). Anything that deletes needs an explicit `confirm` (for a site, its exact name); "delete everything" also removes the databases, backups and Git connection. Long jobs (deploy, backup, upgrade) are followed to the end, or for up to 25 seconds on the hosted version, which then returns the job to follow with `shiplane_job`. `SHIPLANE_MCP_READONLY=1` hides every tool that changes something in the local version; for the hosted one, use a read-only key.
+
+## Using the server as a VPN for your phone (WireGuard)
+
+`scripts/setup_wireguard.sh` turns this server into a WireGuard VPN: your phone (or laptop) sends **all** its traffic through the server, so websites see the server's address and the network you are on (cafe, hotel) sees only encrypted traffic to the server.
+
+1. Copy the script to the server and run it: `sudo ./setup_wireguard.sh`. It installs WireGuard, creates the VPN, turns on forwarding, opens the UDP port in ufw if ufw is on, starts the VPN at every boot, adds a device called `phone` and prints a **QR code**.
+2. **Hetzner firewall:** if the server has a Cloud Firewall (Hetzner console, Firewalls), add an inbound rule **UDP 51820**. The script cannot do this for you. (The Firewall page of this app only manages the server's own ufw.)
+3. On the phone install the **WireGuard** app (Android or iOS), tap **+**, **Scan from QR code**, scan the screen, and switch the tunnel on. Then clear the terminal: the code holds that device's private key.
+4. Check that it works: open any "what is my IP" page on the phone; it should show the server's address.
+
+More devices: `sudo ./setup_wireguard.sh --add laptop` (own keys and address each). `--list` shows devices and when each last connected, `--show NAME` shows the code again, `--remove NAME` revokes a device at once, `--status` shows the tunnel, `--uninstall --yes` removes everything. Options for the first run: `--port`, `--endpoint HOST` (use a domain name or the public IP when the script cannot guess it), `--dns "1.1.1.1, 9.9.9.9"`, `--no-ipv6`.
+
+Good to know: devices can reach the internet but not each other. IPv6 is routed too when the server has it, so nothing leaks around the tunnel. The traffic counts toward the server's monthly traffic allowance. It works next to the Tailscale setup and Docker (different interfaces). Keep the device configs private: anyone with one can use your VPN until you `--remove` it.
 
 ## Reaching the server over Tailscale
 
